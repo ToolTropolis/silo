@@ -1,28 +1,193 @@
 package registry
 
-import "context"
+import (
+	"context"
+	_ "embed"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/rqlite/gorqlite"
+)
+
+//go:embed migrations/001_projects.sql
+var schemaSQL string
 
 // Rqlite is the default TenantRegistry, backed by a 3-node rqlite cluster
-// (SQLite semantics + Raft HA). It follows leader redirects automatically via
-// the rqlite/gorqlite client.
-//
-// Not yet implemented — build sequence step 2 (docs/architecture.md).
+// (SQLite semantics + Raft HA). gorqlite follows leader redirects
+// automatically, so pointing it at every node's address lets reads and writes
+// survive a leader failover transparently.
 type Rqlite struct {
-	// cluster addresses and the gorqlite connection land here.
+	conn *gorqlite.Connection
 }
 
 var _ TenantRegistry = (*Rqlite)(nil)
 
-func (r *Rqlite) Register(ctx context.Context, rec ProjectRecord) error { return errNotImplemented }
+// NewRqlite connects to the cluster and ensures the schema exists. Pass every
+// known node address (e.g. http://localhost:4001, ...:4003, ...:4005) so the
+// client can retry against another node when the current one isn't the leader.
+func NewRqlite(ctx context.Context, addresses []string) (*Rqlite, error) {
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("registry: at least one rqlite address required")
+	}
+	// gorqlite takes a single connection URL, then auto-discovers the rest of
+	// the cluster from /status + /nodes and follows leader failover across the
+	// discovered peers. We hand it the first reachable address as the seed; the
+	// nodes advertise host-reachable addresses (see deploy/docker-compose.yaml),
+	// so discovery yields peers a host client can actually reach.
+	conn, err := gorqlite.Open(seedURL(addresses))
+	if err != nil {
+		return nil, fmt.Errorf("registry: open rqlite: %w", err)
+	}
+	r := &Rqlite{conn: conn}
+	if err := r.ensureSchema(ctx); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
+// seedURL returns the seed connection URL gorqlite dials first. It expects a
+// single http(s):// URL; the rest of the cluster is discovered from there.
+func seedURL(addresses []string) string {
+	return addresses[0]
+}
+
+// Close releases the connection.
+func (r *Rqlite) Close() { r.conn.Close() }
+
+func (r *Rqlite) ensureSchema(ctx context.Context) error {
+	// Each statement in the migration is applied; rqlite's WriteOne runs one
+	// statement, so split on ';' and skip blanks/comments.
+	for _, stmt := range splitStatements(schemaSQL) {
+		if _, err := r.conn.WriteOneContext(ctx, stmt); err != nil {
+			return fmt.Errorf("registry: apply schema: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *Rqlite) Register(ctx context.Context, rec ProjectRecord) error {
+	if rec.ProjectID == "" || rec.BucketName == "" {
+		return fmt.Errorf("registry: ProjectID and BucketName are required")
+	}
+	if rec.CreatedAt == "" {
+		rec.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if rec.Status == "" {
+		rec.Status = StatusActive
+	}
+	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query: `INSERT INTO projects
+			(project_id, bucket_name, credential_id, key_id, created_at, status)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+		Arguments: []interface{}{
+			rec.ProjectID, rec.BucketName, rec.CredentialID, rec.KeyID, rec.CreatedAt, rec.Status,
+		},
+	})
+	if err != nil {
+		if isUniqueViolation(err) || isUniqueViolation(res.Err) {
+			return fmt.Errorf("registry: project %q already registered: %w", rec.ProjectID, ErrAlreadyExists)
+		}
+		return fmt.Errorf("registry: register %q: %w", rec.ProjectID, err)
+	}
+	return nil
+}
 
 func (r *Rqlite) Get(ctx context.Context, projectID string) (ProjectRecord, error) {
-	return ProjectRecord{}, errNotImplemented
+	rows, err := r.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query: `SELECT project_id, bucket_name, credential_id, key_id, created_at, status
+			FROM projects WHERE project_id = ?`,
+		Arguments: []interface{}{projectID},
+	})
+	if err != nil {
+		return ProjectRecord{}, fmt.Errorf("registry: get %q: %w", projectID, err)
+	}
+	if !rows.Next() {
+		return ProjectRecord{}, ErrNotFound
+	}
+	return scanRecord(rows)
 }
 
-func (r *Rqlite) List(ctx context.Context) ([]ProjectRecord, error) { return nil, errNotImplemented }
+func (r *Rqlite) List(ctx context.Context) ([]ProjectRecord, error) {
+	rows, err := r.conn.QueryOneContext(ctx,
+		`SELECT project_id, bucket_name, credential_id, key_id, created_at, status
+			FROM projects ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list: %w", err)
+	}
+	var out []ProjectRecord
+	for rows.Next() {
+		rec, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
 
 func (r *Rqlite) UpdateStatus(ctx context.Context, projectID string, status string) error {
-	return errNotImplemented
+	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     `UPDATE projects SET status = ? WHERE project_id = ?`,
+		Arguments: []interface{}{status, projectID},
+	})
+	if err != nil {
+		return fmt.Errorf("registry: update status %q: %w", projectID, err)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-func (r *Rqlite) Deregister(ctx context.Context, projectID string) error { return errNotImplemented }
+func (r *Rqlite) Deregister(ctx context.Context, projectID string) error {
+	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     `DELETE FROM projects WHERE project_id = ?`,
+		Arguments: []interface{}{projectID},
+	})
+	if err != nil {
+		return fmt.Errorf("registry: deregister %q: %w", projectID, err)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// scanRecord reads the standard column order into a ProjectRecord.
+func scanRecord(rows gorqlite.QueryResult) (ProjectRecord, error) {
+	var rec ProjectRecord
+	err := rows.Scan(&rec.ProjectID, &rec.BucketName, &rec.CredentialID, &rec.KeyID, &rec.CreatedAt, &rec.Status)
+	if err != nil {
+		return ProjectRecord{}, fmt.Errorf("registry: scan row: %w", err)
+	}
+	return rec, nil
+}
+
+// splitStatements breaks a multi-statement SQL string into individual trimmed
+// statements, dropping blanks and full-line comments.
+func splitStatements(sql string) []string {
+	var out []string
+	for _, part := range strings.Split(sql, ";") {
+		var lines []string
+		for _, ln := range strings.Split(part, "\n") {
+			if t := strings.TrimSpace(ln); t != "" && !strings.HasPrefix(t, "--") {
+				lines = append(lines, ln)
+			}
+		}
+		if joined := strings.TrimSpace(strings.Join(lines, "\n")); joined != "" {
+			out = append(out, joined)
+		}
+	}
+	return out
+}
+
+// isUniqueViolation reports whether err is a SQLite UNIQUE/PK constraint error.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "primary key")
+}

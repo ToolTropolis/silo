@@ -2,7 +2,8 @@ package registry
 
 import "errors"
 
-var errNotImplemented = errors.New("registry: not implemented")
-
-// ErrNotFound is returned by Get when no project record exists.
+// ErrNotFound is returned when no project record matches.
 var ErrNotFound = errors.New("registry: project not found")
+
+// ErrAlreadyExists is returned by Register when the project is already present.
+var ErrAlreadyExists = errors.New("registry: project already exists")

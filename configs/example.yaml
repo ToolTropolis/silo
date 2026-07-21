@@ -13,9 +13,11 @@ registry:
   driver: "rqlite"
   addresses:
     - "http://localhost:4001"
-  # The client should retry against other known nodes if the current one isn't
-  # the leader; the rqlite Go client (rqlite/gorqlite) handles leader redirects
-  # automatically. Point it at all three nodes in a real deployment.
+    - "http://localhost:4003"
+    - "http://localhost:4005"
+  # All three nodes are listed so the client can follow a leader failover to
+  # any of them; gorqlite handles leader redirects automatically. Each node
+  # advertises a host-reachable address (see deploy/docker-compose.yaml).
 
 kms:
   driver: "vault"

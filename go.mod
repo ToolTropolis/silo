@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.30
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/aws/smithy-go v1.27.4
+	github.com/rqlite/gorqlite v0.0.0-20260504155303-50d445fd0ab9
 	go.etcd.io/bbolt v1.5.0
 )
 
