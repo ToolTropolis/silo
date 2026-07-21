@@ -56,3 +56,7 @@ stays green without it.
 
 Don't commit, push, or tag on your own initiative — propose the commands. Use
 Conventional Commits (`feat:`/`fix:`/`docs:`/`chore:`); they drive the changelog.
+
+- **No `Co-Authored-By` trailer in commits.**
+- Reference the Linear issue: put `(NAV-xx)` in the subject and `Ref NAV-xx` in
+  the footer (`Ref` links without auto-closing).

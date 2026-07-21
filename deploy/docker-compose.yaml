@@ -13,21 +13,30 @@ services:
       - "8333:8333"   # S3 API
       - "9333:9333"   # master UI
 
+  # Each node publishes a distinct host port AND advertises a host-reachable
+  # HTTP address (-http-adv-addr). Without the advertised address, rqlite
+  # redirects clients to the leader's container-internal hostname, which the
+  # host can't resolve — so a leader-follow client on the host would fail. All
+  # three are published so a client can follow a failover to any node.
   rqlite1:
     image: rqlite/rqlite
-    command: ["-node-id", "1", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
+    command: ["-node-id", "1", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4001", "-raft-addr", "0.0.0.0:4002"]
     ports:
       - "4001:4001"
 
   rqlite2:
     image: rqlite/rqlite
-    command: ["-node-id", "2", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-join", "http://rqlite1:4001"]
+    command: ["-node-id", "2", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4003", "-raft-addr", "0.0.0.0:4002", "-join", "rqlite1:4002"]
+    ports:
+      - "4003:4001"
     depends_on:
       - rqlite1
 
   rqlite3:
     image: rqlite/rqlite
-    command: ["-node-id", "3", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-join", "http://rqlite1:4001"]
+    command: ["-node-id", "3", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4005", "-raft-addr", "0.0.0.0:4002", "-join", "rqlite1:4002"]
+    ports:
+      - "4005:4001"
     depends_on:
       - rqlite1
 
@@ -38,4 +47,6 @@ services:
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
     ports:
-      - "8200:8200"
+      # Host 8201 (not 8200) so Silo's Vault coexists with other local stacks
+      # that already publish 8200. Container port stays 8200 internally.
+      - "8201:8200"
