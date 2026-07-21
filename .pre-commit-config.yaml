@@ -1,0 +1,18 @@
+# Secret-scanning pre-commit hook (OSPS-BR-07.01).
+#
+# Install the framework once with:  pre-commit install
+# Then gitleaks runs automatically on every commit. If you don't use the
+# pre-commit framework, the native hook in .githooks/pre-commit does the same
+# scan — enable it with:  git config core.hooksPath .githooks
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

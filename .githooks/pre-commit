@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Secret-scanning pre-commit hook (OSPS-BR-07.01).
+# Enable with:  git config core.hooksPath .githooks
+#
+# Scans staged changes for secrets before allowing a commit. Prefers the
+# pre-commit framework if it's set up; otherwise falls back to a direct
+# gitleaks scan. Never bypass with --no-verify on a real commit.
+set -euo pipefail
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks: scanning staged changes for secrets..."
+  # Scan only what's staged; fail the commit on any finding.
+  gitleaks protect --staged --redact --verbose
+else
+  cat >&2 <<'MSG'
+pre-commit: no secret scanner found on PATH.
+
+This hook requires gitleaks to enforce OSPS-BR-07.01 (no plaintext secrets).
+Install it:
+  macOS:   brew install gitleaks
+  Linux:   see https://github.com/gitleaks/gitleaks#installing
+  Go:      go install github.com/gitleaks/gitleaks/v8@latest
+
+Refusing to allow a commit without a secret scan.
+MSG
+  exit 1
+fi

@@ -1,0 +1,41 @@
+# Local development stack for Silo: SeaweedFS (durable backend), a 3-node rqlite
+# cluster (tenant registry with Raft HA), and Vault in dev mode (KMS).
+#
+#   docker compose -f deploy/docker-compose.yaml up
+#
+# DEV-ONLY. Vault runs in dev mode with a fixed root token and the services are
+# unauthenticated on localhost — never use this configuration in production.
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    command: "server -s3 -s3.port=8333"
+    ports:
+      - "8333:8333"   # S3 API
+      - "9333:9333"   # master UI
+
+  rqlite1:
+    image: rqlite/rqlite
+    command: ["-node-id", "1", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
+    ports:
+      - "4001:4001"
+
+  rqlite2:
+    image: rqlite/rqlite
+    command: ["-node-id", "2", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-join", "http://rqlite1:4001"]
+    depends_on:
+      - rqlite1
+
+  rqlite3:
+    image: rqlite/rqlite
+    command: ["-node-id", "3", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-join", "http://rqlite1:4001"]
+    depends_on:
+      - rqlite1
+
+  vault:
+    image: hashicorp/vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
+    ports:
+      - "8200:8200"

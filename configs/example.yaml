@@ -1,0 +1,26 @@
+# Silo local-dev configuration.
+#
+# DEV-ONLY SCAFFOLDING. These values point at the services in
+# deploy/docker-compose.yaml. Never commit real Vault tokens, SeaweedFS
+# credentials, or production registry paths here — production config is supplied
+# via environment variables or a secrets manager, not a checked-in file.
+
+backend:
+  endpoint: "http://localhost:8333"
+  region: "us-east-1"       # SeaweedFS S3 gateway ignores region but the client lib expects one
+
+registry:
+  driver: "rqlite"
+  addresses:
+    - "http://localhost:4001"
+  # The client should retry against other known nodes if the current one isn't
+  # the leader; the rqlite Go client (rqlite/gorqlite) handles leader redirects
+  # automatically. Point it at all three nodes in a real deployment.
+
+kms:
+  driver: "vault"
+  address: "http://localhost:8200"
+  token: "dev-only-token"    # dev only — never a real credential in this file
+
+cache:
+  path: "./data/cache"        # bbolt files, one per project, live here locally

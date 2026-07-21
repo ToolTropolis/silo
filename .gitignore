@@ -1,0 +1,45 @@
+# --- Secrets & credentials (OSPS-BR-07.01) ---
+# Never commit real credentials. The only config that belongs in the tree is
+# configs/example.yaml, which holds dev-only throwaway values.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials
+credentials.*
+*-credentials.*
+secrets.yaml
+secrets.yml
+vault-token
+*.token
+
+# --- Local runtime data (bbolt cache, per-project stores) ---
+/data/
+*.db
+*.bolt
+*.bbolt
+
+# --- Go build & test artifacts ---
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+vendor/
+go.work
+go.work.sum
+
+# --- Editor / OS noise ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

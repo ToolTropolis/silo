@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose an enhancement to Silo.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before proposing, check whether the idea is already tracked as a
+        deferred item in [docs/architecture.md](../../docs/architecture.md) or
+        the spec's "open items" section.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that Silo doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        How might it work? Note if it touches a locked-in decision or an
+        interface contract (DurableBackend, LocalCache, TenantRegistry,
+        KeyManager, DistilatorProvider, client.Client) — those changes need
+        explicit discussion.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
