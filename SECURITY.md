@@ -14,8 +14,7 @@ Report privately through one of:
 - **GitHub Security Advisories** — the "Report a vulnerability" button under the
   repository's **Security** tab (preferred; keeps the report private and
   threaded).
-- **Email** — `security@tooltropolis.example` with subject `SILO SECURITY`.
-  <!-- Replace with the real security contact before the first published release. -->
+- **Email** — `nishant.navjyot@gmail.com` with subject `SILO SECURITY`.
 
 Include, where you can: affected version/commit, a description of the issue, a
 proof-of-concept or reproduction steps, and the impact you observed — especially
