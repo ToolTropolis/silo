@@ -38,4 +38,6 @@ services:
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
     ports:
-      - "8200:8200"
+      # Host 8201 (not 8200) so Silo's Vault coexists with other local stacks
+      # that already publish 8200. Container port stays 8200 internally.
+      - "8201:8200"

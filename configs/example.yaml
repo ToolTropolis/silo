@@ -19,7 +19,7 @@ registry:
 
 kms:
   driver: "vault"
-  address: "http://localhost:8200"
+  address: "http://localhost:8201"   # host port 8201 (see deploy/docker-compose.yaml)
   token: "dev-only-token"    # dev only — never a real credential in this file
 
 cache:
