@@ -15,4 +15,9 @@ type KeyManager interface {
 	RevokeKey(ctx context.Context, keyID string) error        // teardown step
 }
 
-var errNotImplemented = errors.New("kms: not implemented")
+// ErrKeyNotFound is returned by GetKey when no key exists for the keyID.
+var ErrKeyNotFound = errors.New("kms: key not found")
+
+// ErrKeyExists is returned by CreateKey when the project already has a key —
+// so a re-run of onboarding never silently rotates a live key.
+var ErrKeyExists = errors.New("kms: key already exists")
