@@ -8,6 +8,11 @@
 backend:
   endpoint: "http://localhost:8333"
   region: "us-east-1"       # SeaweedFS S3 gateway ignores region but the client lib expects one
+  # Once any S3 identity exists, SeaweedFS disables anonymous access, so the
+  # backend adapter authenticates as the silo-admin identity provisioned by
+  # deploy/bootstrap-dev.sh. Dev-only throwaway values.
+  access_key: "SILOADMIN"
+  secret_key: "SILOADMINSECRET"
 
 registry:
   driver: "rqlite"

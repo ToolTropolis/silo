@@ -56,6 +56,9 @@ func runOnboard(args []string) error {
 	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
 	vaultAddr := fs.String("vault", "http://localhost:8201", "Vault address")
 	vaultToken := fs.String("vault-token", os.Getenv("VAULT_TOKEN"), "Vault token (or VAULT_TOKEN env)")
+	weedBinary := fs.String("weed-binary", "weed", "path to the weed binary used to issue scoped credentials")
+	weedFiler := fs.String("weed-filer", "localhost:8888", "SeaweedFS filer host:port for credential issuance")
+	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master host:port for credential issuance")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -84,13 +87,21 @@ func runOnboard(args []string) error {
 		return fmt.Errorf("connect backend: %w", err)
 	}
 
+	// Real bucket-scoped credential issuer: creates a per-project SeaweedFS
+	// identity via `weed shell` s3.configure, scoped Read,Write on that
+	// project's bucket only — the enforced isolation boundary. The secret key
+	// is stored in Vault (km), never on the registry.
+	creds := admin.NewSeaweedCredentialIssuer(admin.SeaweedConfig{
+		WeedBinary: *weedBinary,
+		Filer:      *weedFiler,
+		Master:     *weedMaster,
+	}, km)
+
 	o := &admin.Onboarder{
 		Registry: reg,
 		KMS:      km,
 		Backend:  be,
-		// Dev issuer: no real SeaweedFS IAM in the local stack. Replace with a
-		// real bucket-scoped IAM issuer before relying on isolation in prod.
-		Creds: admin.NoopCredentialIssuer{},
+		Creds:    creds,
 	}
 	if err := o.Onboard(ctx, *project); err != nil {
 		return err

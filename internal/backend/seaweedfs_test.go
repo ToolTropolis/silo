@@ -36,11 +36,28 @@ func newLiveBackend(t *testing.T) *SeaweedFS {
 	}
 	_ = conn.Close()
 
-	b, err := NewSeaweedFS(Config{Endpoint: endpoint, Region: "us-east-1"})
+	ak, sk := testAdminCreds()
+	b, err := NewSeaweedFS(Config{Endpoint: endpoint, Region: "us-east-1", AccessKey: ak, SecretKey: sk})
 	if err != nil {
 		t.Fatalf("NewSeaweedFS: %v", err)
 	}
 	return b
+}
+
+// testAdminCreds returns the silo-admin S3 credentials the dev stack is
+// bootstrapped with (deploy/bootstrap-dev.sh). Overridable via env. Once any
+// identity exists in SeaweedFS, anonymous access is disabled, so integration
+// tests must authenticate.
+func testAdminCreds() (accessKey, secretKey string) {
+	ak := os.Getenv("SILO_TEST_S3_ACCESS_KEY")
+	if ak == "" {
+		ak = "SILOADMIN"
+	}
+	sk := os.Getenv("SILO_TEST_S3_SECRET_KEY")
+	if sk == "" {
+		sk = "SILOADMINSECRET"
+	}
+	return ak, sk
 }
 
 // uniqueProject gives each test run its own bucket so parallel/repeat runs don't

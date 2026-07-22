@@ -36,7 +36,10 @@ func TestOnboard_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kms: %v", err)
 	}
-	be, err := backend.NewSeaweedFS(backend.Config{Endpoint: s3Endpoint, Region: "us-east-1"})
+	adminAK, adminSK := testAdminCreds()
+	be, err := backend.NewSeaweedFS(backend.Config{
+		Endpoint: s3Endpoint, Region: "us-east-1", AccessKey: adminAK, SecretKey: adminSK,
+	})
 	if err != nil {
 		t.Fatalf("backend: %v", err)
 	}
