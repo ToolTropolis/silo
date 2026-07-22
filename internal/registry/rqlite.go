@@ -141,6 +141,20 @@ func (r *Rqlite) UpdateStatus(ctx context.Context, projectID string, status stri
 	return nil
 }
 
+func (r *Rqlite) UpdateRefs(ctx context.Context, projectID, keyID, credentialID string) error {
+	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     `UPDATE projects SET key_id = ?, credential_id = ? WHERE project_id = ?`,
+		Arguments: []interface{}{keyID, credentialID, projectID},
+	})
+	if err != nil {
+		return fmt.Errorf("registry: update refs %q: %w", projectID, err)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *Rqlite) Deregister(ctx context.Context, projectID string) error {
 	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
 		Query:     `DELETE FROM projects WHERE project_id = ?`,
