@@ -1,6 +1,12 @@
 package admin
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// errNotImplemented marks the teardown stub, filled in at build sequence step 7.
+var errNotImplemented = errors.New("admin: not implemented")
 
 // TeardownStep names one confirmed layer of the manual teardown flow. Each is a
 // separate, individually-confirmed siloctl invocation — teardown is never a
