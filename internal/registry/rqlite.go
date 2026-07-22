@@ -2,16 +2,17 @@ package registry
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/rqlite/gorqlite"
 )
 
-//go:embed migrations/001_projects.sql
-var schemaSQL string
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // Rqlite is the default TenantRegistry, backed by a 3-node rqlite cluster
 // (SQLite semantics + Raft HA). gorqlite follows leader redirects
@@ -57,11 +58,29 @@ func seedURL(addresses []string) string {
 func (r *Rqlite) Close() { r.conn.Close() }
 
 func (r *Rqlite) ensureSchema(ctx context.Context) error {
-	// Each statement in the migration is applied; rqlite's WriteOne runs one
-	// statement, so split on ';' and skip blanks/comments.
-	for _, stmt := range splitStatements(schemaSQL) {
-		if _, err := r.conn.WriteOneContext(ctx, stmt); err != nil {
-			return fmt.Errorf("registry: apply schema: %w", err)
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("registry: read migrations: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names) // apply in filename order (001_, 002_, ...)
+
+	for _, name := range names {
+		content, err := migrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			return fmt.Errorf("registry: read migration %s: %w", name, err)
+		}
+		// rqlite's WriteOne runs one statement, so split on ';' and skip
+		// blanks/comments.
+		for _, stmt := range splitStatements(string(content)) {
+			if _, err := r.conn.WriteOneContext(ctx, stmt); err != nil {
+				return fmt.Errorf("registry: apply %s: %w", name, err)
+			}
 		}
 	}
 	return nil
@@ -182,16 +201,20 @@ func scanRecord(rows gorqlite.QueryResult) (ProjectRecord, error) {
 // splitStatements breaks a multi-statement SQL string into individual trimmed
 // statements, dropping blanks and full-line comments.
 func splitStatements(sql string) []string {
-	var out []string
-	for _, part := range strings.Split(sql, ";") {
-		var lines []string
-		for _, ln := range strings.Split(part, "\n") {
-			if t := strings.TrimSpace(ln); t != "" && !strings.HasPrefix(t, "--") {
-				lines = append(lines, ln)
-			}
+	// Strip -- line comments FIRST (including trailing ones), so a ';' inside a
+	// comment can't split a statement, then split on ';'.
+	var b strings.Builder
+	for _, ln := range strings.Split(sql, "\n") {
+		if i := strings.Index(ln, "--"); i >= 0 {
+			ln = ln[:i]
 		}
-		if joined := strings.TrimSpace(strings.Join(lines, "\n")); joined != "" {
-			out = append(out, joined)
+		b.WriteString(ln)
+		b.WriteByte('\n')
+	}
+	var out []string
+	for _, part := range strings.Split(b.String(), ";") {
+		if s := strings.TrimSpace(part); s != "" {
+			out = append(out, s)
 		}
 	}
 	return out
