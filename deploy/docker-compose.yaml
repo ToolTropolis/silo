@@ -8,10 +8,15 @@
 services:
   seaweedfs:
     image: chrislusf/seaweedfs
+    # The filer gRPC port (HTTP port + 10000 = 18888) is published so Silo's
+    # credential issuer can write per-project S3 identities via the filer
+    # ConfigurationApi.
     command: "server -s3 -s3.port=8333"
     ports:
-      - "8333:8333"   # S3 API
-      - "9333:9333"   # master UI
+      - "8333:8333"    # S3 API
+      - "9333:9333"    # master UI
+      - "8888:8888"    # filer HTTP
+      - "18888:18888"  # filer gRPC (S3 identity config)
 
   # Each node publishes a distinct host port AND advertises a host-reachable
   # HTTP address (-http-adv-addr). Without the advertised address, rqlite

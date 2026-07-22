@@ -152,3 +152,43 @@ func (v *Vault) RevokeKey(ctx context.Context, keyID string) error {
 	}
 	return nil
 }
+
+// credPath namespaces credential secrets separately from per-project keys within
+// the same KV mount.
+func credPath(credentialID string) string { return path.Join("credentials", credentialID) }
+
+// PutSecret stores an opaque secret (e.g. an S3 access:secret pair) under a
+// credentialID. Lets the same Vault back the admin package's SecretStore so
+// issued credential secrets never touch the registry.
+func (v *Vault) PutSecret(ctx context.Context, credentialID, secret string) error {
+	if _, err := v.client.KVv2(v.mount).Put(ctx, credPath(credentialID), map[string]interface{}{
+		dataField: secret,
+	}); err != nil {
+		return fmt.Errorf("kms: store secret %q: %w", credentialID, err)
+	}
+	return nil
+}
+
+// GetSecret reads back a secret stored by PutSecret.
+func (v *Vault) GetSecret(ctx context.Context, credentialID string) (string, error) {
+	secret, err := v.client.KVv2(v.mount).Get(ctx, credPath(credentialID))
+	if err != nil {
+		if errors.Is(err, vault.ErrSecretNotFound) {
+			return "", ErrKeyNotFound
+		}
+		return "", fmt.Errorf("kms: get secret %q: %w", credentialID, err)
+	}
+	s, ok := secret.Data[dataField].(string)
+	if !ok {
+		return "", fmt.Errorf("kms: secret %q missing %q field", credentialID, dataField)
+	}
+	return s, nil
+}
+
+// DeleteSecret removes a stored secret (teardown / rollback). Absent is a no-op.
+func (v *Vault) DeleteSecret(ctx context.Context, credentialID string) error {
+	if err := v.client.KVv2(v.mount).DeleteMetadata(ctx, credPath(credentialID)); err != nil {
+		return fmt.Errorf("kms: delete secret %q: %w", credentialID, err)
+	}
+	return nil
+}

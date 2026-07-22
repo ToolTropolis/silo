@@ -5,16 +5,15 @@ import (
 	"fmt"
 )
 
-// NoopCredentialIssuer is a placeholder CredentialIssuer for the dev stack,
-// where SeaweedFS runs with anonymous/open access and no IAM is configured. It
-// returns a deterministic reference and treats revoke as a no-op, so onboarding
-// and its rollback are exercisable end-to-end locally.
+// NoopCredentialIssuer is a stand-in CredentialIssuer that provisions no real
+// credential — it returns a deterministic fake reference and treats revoke as a
+// no-op. It exists so the onboarding orchestration (and its rollback) can be
+// tested without a live SeaweedFS.
 //
-// GAP (spec §4 step 4): real per-project scoped credentials require SeaweedFS
-// IAM (bucket-scoped access keys). That wiring is not implemented here and must
-// replace this issuer before the isolation guarantee holds in a real
-// deployment — see the cross-project isolation test (NAV-78), which will fail
-// against this no-op issuer by design until real IAM lands.
+// It does NOT enforce isolation. Production and any isolation-sensitive path use
+// SeaweedCredentialIssuer, which creates a real per-project bucket-scoped
+// SeaweedFS identity (see the cross-project isolation test). siloctl wires the
+// real issuer; this type is for tests only.
 type NoopCredentialIssuer struct{}
 
 var _ CredentialIssuer = NoopCredentialIssuer{}

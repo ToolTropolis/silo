@@ -65,16 +65,28 @@ docs/         architecture.md
 # 1. Stand up local dependencies: SeaweedFS, a 3-node rqlite cluster, Vault (dev).
 docker compose -f deploy/docker-compose.yaml up -d
 
-# 2. Build everything.
+# 2. Provision the silo-admin S3 identity the backend authenticates as.
+deploy/bootstrap-dev.sh
+
+# 3. Build everything.
 go build ./...
 
-# 3. Run the tests.
+# 4. Run the tests (integration tests skip cleanly if the stack isn't up).
 go test ./...
 ```
 
 The local defaults in [`configs/example.yaml`](configs/example.yaml) point at
 the compose services. **These are dev-only values** — production config comes
 from environment variables or a secrets manager, never a checked-in file.
+
+> **Isolation note.** Silo's guarantee is per-project isolation: onboarding
+> issues each project a SeaweedFS identity scoped Read/Write to *only* its own
+> bucket, so one project's credential is denied (403) on another's bucket. A
+> consequence is that **once any identity exists, SeaweedFS disables anonymous
+> access cluster-wide** — so Silo's own components authenticate as the
+> `silo-admin` identity (`deploy/bootstrap-dev.sh`). The isolation guarantee is
+> covered by an integration test that drives one project's credential against
+> another's bucket and asserts it's refused.
 
 Once the daemon and Distilator are implemented, the end-to-end loop to exercise
 by hand (per the v1 definition of done) is:
