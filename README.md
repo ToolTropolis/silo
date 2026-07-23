@@ -88,15 +88,42 @@ from environment variables or a secrets manager, never a checked-in file.
 > covered by an integration test that drives one project's credential against
 > another's bucket and asserts it's refused.
 
-Once the daemon and Distilator are implemented, the end-to-end loop to exercise
-by hand (per the v1 definition of done) is:
+## Exercising the full cycle by hand
+
+The end-to-end loop from the v1 definition of done. Everything below is
+implemented and verified against the dev stack.
 
 ```bash
-siloctl onboard --project=proj-11       # provision bucket + key + registry entry
-# ... agents Read/Write via pkg/client against the daemon ...
-silo-distil run --project=proj-11 --since=24h   # propose consolidated changes
-# ... review & promote in the dashboard ...
+# S3 admin credentials, from deploy/bootstrap-dev.sh. Onboarding creates
+# buckets, and anonymous access is disabled once any identity exists.
+export SILO_S3_ACCESS_KEY=SILOADMIN SILO_S3_SECRET_KEY=SILOADMINSECRET
+
+# 1. Provision an isolated project: bucket + per-project SSE key + registry
+#    record + a credential scoped Read/Write to that bucket only.
+#    --weed-binary is needed because credential issuance shells out to `weed`,
+#    which lives in the SeaweedFS container rather than on the host.
+siloctl onboard --project=proj-11 --vault-token=dev-only-token \
+  --weed-binary=./deploy/weed-docker.sh
+
+# 2. Agents read/write memory through the SDK against a running daemon.
+silod --listen 127.0.0.1:8500 --tokens "agent-token=proj-11"
+
+# 3. Propose consolidated changes from the project's captured sessions.
+#    Writes to _distilations/<run-id>/ — the live store is NOT modified.
+silo-distil run --project=proj-11 --since=24h
+
+# 4. Review the proposals, then promote only the ones you approve. Promotion
+#    goes through the daemon's CAS write path, tagged promoted_from:<run-id>.
+silo-distil show    --project=proj-11 --run-id=<id>
+silo-distil promote --project=proj-11 --run-id=<id> --paths=memory/conventions.md
 ```
+
+The Distilator authenticates to Claude via the Go SDK's standard credential
+chain. For subscription-based OAuth with **no API key**, run `ant auth login`
+once ([Anthropic CLI](https://platform.claude.com/docs/en/api/sdks/cli)); the
+zero-argument client picks the profile up automatically. A stale exported
+`ANTHROPIC_API_KEY` silently takes precedence over the profile — `ant auth
+status` shows which credential source is active.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full build sequence
 and the v1 acceptance checklist.

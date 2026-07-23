@@ -53,6 +53,8 @@ func runOnboard(args []string) error {
 	project := fs.String("project", "", "project ID to onboard (required)")
 	backendEndpoint := fs.String("backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
 	backendRegion := fs.String("backend-region", "us-east-1", "S3 region (SeaweedFS ignores it)")
+	s3AccessKey := fs.String("s3-access-key", os.Getenv("SILO_S3_ACCESS_KEY"), "S3 admin access key (or SILO_S3_ACCESS_KEY)")
+	s3SecretKey := fs.String("s3-secret-key", os.Getenv("SILO_S3_SECRET_KEY"), "S3 admin secret key (or SILO_S3_SECRET_KEY)")
 	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
 	vaultAddr := fs.String("vault", "http://localhost:8201", "Vault address")
 	vaultToken := fs.String("vault-token", os.Getenv("VAULT_TOKEN"), "Vault token (or VAULT_TOKEN env)")
@@ -68,6 +70,11 @@ func runOnboard(args []string) error {
 	if *vaultToken == "" {
 		return fmt.Errorf("Vault token required (--vault-token or VAULT_TOKEN)")
 	}
+	if *s3AccessKey == "" || *s3SecretKey == "" {
+		return fmt.Errorf("S3 admin credentials required (--s3-access-key/--s3-secret-key or " +
+			"SILO_S3_ACCESS_KEY/SILO_S3_SECRET_KEY): onboarding creates buckets, and anonymous " +
+			"access is disabled once any identity exists. For the dev stack, run deploy/bootstrap-dev.sh")
+	}
 
 	ctx := context.Background()
 
@@ -82,7 +89,15 @@ func runOnboard(args []string) error {
 		return fmt.Errorf("connect kms: %w", err)
 	}
 
-	be, err := backend.NewSeaweedFS(backend.Config{Endpoint: *backendEndpoint, Region: *backendRegion})
+	// Onboarding creates buckets, so it authenticates as the S3 admin identity.
+	// Anonymous access is disabled cluster-wide once any identity exists (the
+	// isolation guarantee), so these credentials are required, not optional.
+	be, err := backend.NewSeaweedFS(backend.Config{
+		Endpoint:  *backendEndpoint,
+		Region:    *backendRegion,
+		AccessKey: *s3AccessKey,
+		SecretKey: *s3SecretKey,
+	})
 	if err != nil {
 		return fmt.Errorf("connect backend: %w", err)
 	}
