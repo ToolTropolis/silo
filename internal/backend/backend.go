@@ -40,6 +40,17 @@ type DurableBackend interface {
 	// ListVersions returns version history for a path, newest first.
 	ListVersions(ctx context.Context, projectID, path string) ([]ObjectVersion, error)
 
+	// ListPaths returns the object keys under a prefix (current versions only,
+	// delete markers excluded).
+	//
+	// ADDITIVE CONTRACT EXTENSION beyond the spec's §3.1 interface: the spec's
+	// pkg/client (§3.7) defines List(pathPrefix) and Search(pathPrefix, query),
+	// and neither is implementable without path enumeration — ListVersions only
+	// covers versions of an already-known path. S3/SeaweedFS support this
+	// natively (ListObjectsV2), so this is a thin adapter addition. Additive
+	// only: no existing signature changed.
+	ListPaths(ctx context.Context, projectID, prefix string) ([]string, error)
+
 	// Delete removes an object (creates a delete marker; version history persists).
 	Delete(ctx context.Context, projectID, path string) error
 

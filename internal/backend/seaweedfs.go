@@ -149,6 +149,34 @@ func (s *SeaweedFS) Get(ctx context.Context, projectID, path string, versionID s
 	return content, ver, nil
 }
 
+// ListPaths returns current object keys under a prefix, paginating through the
+// full result set so large projects aren't silently truncated at 1000 keys.
+func (s *SeaweedFS) ListPaths(ctx context.Context, projectID, prefix string) ([]string, error) {
+	bucket := bucketFor(projectID)
+	var (
+		paths []string
+		token *string
+	)
+	for {
+		out, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("backend: list paths %s/%s: %w", bucket, prefix, err)
+		}
+		for _, o := range out.Contents {
+			paths = append(paths, aws.ToString(o.Key))
+		}
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			break
+		}
+		token = out.NextContinuationToken
+	}
+	return paths, nil
+}
+
 func (s *SeaweedFS) ListVersions(ctx context.Context, projectID, path string) ([]ObjectVersion, error) {
 	bucket := bucketFor(projectID)
 	out, err := s.client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{

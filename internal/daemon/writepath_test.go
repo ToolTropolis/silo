@@ -65,6 +65,10 @@ func (f *fakeBackend) Put(ctx context.Context, projectID, path string, content [
 func (f *fakeBackend) ListVersions(context.Context, string, string) ([]backend.ObjectVersion, error) {
 	return nil, nil
 }
+
+func (f *fakeBackend) ListPaths(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeBackend) Delete(context.Context, string, string) error { return nil }
 func (f *fakeBackend) CreateBucket(context.Context, string) error   { return nil }
 func (f *fakeBackend) DeleteBucket(context.Context, string) error   { return nil }
