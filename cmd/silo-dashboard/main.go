@@ -1,0 +1,97 @@
+// Command silo-dashboard serves the v1 read/review web surface: the tenant
+// registry, a memory version browser, and Distilator proposal review.
+//
+// It is read-only except for one action — promoting an approved Distilator
+// proposal, which routes through the daemon's CAS write path. Teardown is never
+// exposed here; that stays in siloctl's confirmed per-layer CLI flow.
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/tooltropolis/silo/internal/backend"
+	"github.com/tooltropolis/silo/internal/cache"
+	"github.com/tooltropolis/silo/internal/daemon"
+	"github.com/tooltropolis/silo/internal/distilator"
+	"github.com/tooltropolis/silo/internal/registry"
+	"github.com/tooltropolis/silo/web/dashboard"
+)
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "silo-dashboard:", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	fs := flag.NewFlagSet("silo-dashboard", flag.ContinueOnError)
+	listen := fs.String("listen", "127.0.0.1:8600", "listen address")
+	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
+	backendEndpoint := fs.String("backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
+	backendRegion := fs.String("backend-region", "us-east-1", "S3 region")
+	accessKey := fs.String("s3-access-key", os.Getenv("SILO_S3_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY)")
+	secretKey := fs.String("s3-secret-key", os.Getenv("SILO_S3_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY)")
+	cacheDir := fs.String("cache-dir", "./data/dashboard-cache", "bbolt cache directory (used by the promote path)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	reg, err := registry.NewRqlite(ctx, splitCSV(*rqliteAddrs))
+	if err != nil {
+		return fmt.Errorf("connect registry: %w", err)
+	}
+	defer reg.Close()
+
+	be, err := backend.NewSeaweedFS(backend.Config{
+		Endpoint:  *backendEndpoint,
+		Region:    *backendRegion,
+		AccessKey: *accessKey,
+		SecretKey: *secretKey,
+	})
+	if err != nil {
+		return fmt.Errorf("connect backend: %w", err)
+	}
+
+	localCache, err := cache.NewBoltCache(*cacheDir)
+	if err != nil {
+		return fmt.Errorf("open cache: %w", err)
+	}
+	defer localCache.Close()
+
+	// The daemon supplies SafeWrite, so promotion gets the same CAS/versioning
+	// treatment as any other write.
+	d := daemon.New(be, localCache, reg, nil)
+	reviewer := distilator.NewReviewer(distilator.NewDaemonStore(d), d)
+
+	srv, err := dashboard.NewServer(reg, be, reviewer)
+	if err != nil {
+		return err
+	}
+
+	httpSrv := &http.Server{
+		Addr:              *listen,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	fmt.Printf("silo-dashboard: http://%s\n", *listen)
+	return httpSrv.ListenAndServe()
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

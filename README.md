@@ -116,7 +116,20 @@ silo-distil run --project=proj-11 --since=24h
 #    goes through the daemon's CAS write path, tagged promoted_from:<run-id>.
 silo-distil show    --project=proj-11 --run-id=<id>
 silo-distil promote --project=proj-11 --run-id=<id> --paths=memory/conventions.md
+
+# ...or review and approve in the browser instead:
+silo-dashboard --listen 127.0.0.1:8600   # http://127.0.0.1:8600
 ```
+
+### Dashboard
+
+`silo-dashboard` serves the v1 read/review surface — the tenant registry, a
+memory version browser, and Distilator proposal review with side-by-side diffs.
+
+It is **read-only except for one action**: promoting an approved Distilator
+proposal, which routes through the daemon's CAS write path. Teardown is never
+exposed in the UI — that stays in `siloctl`'s confirmed per-layer CLI flow. The
+registry view renders credential and key **references only**, never secrets.
 
 The Distilator authenticates to Claude via the Go SDK's standard credential
 chain. For subscription-based OAuth with **no API key**, run `ant auth login`

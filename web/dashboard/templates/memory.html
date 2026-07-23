@@ -1,0 +1,60 @@
+{{define "body"}}
+<h1>Memory browser</h1>
+<p class="sub">Browse a project's memory paths and version history. Content is
+decrypted server-side — ciphertext and key material never reach the browser.</p>
+
+{{if not .Project}}
+  {{if .Projects}}
+    <div class="lbl">Select a project</div>
+    <div class="chips">
+      {{range .Projects}}<a href="/memory?project={{.}}"><code>{{.}}</code></a>{{end}}
+    </div>
+  {{else}}
+    <div class="empty">No projects registered yet.</div>
+  {{end}}
+{{else}}
+  <div class="chips">
+    <span class="lbl">Project</span>
+    <a href="/memory?project={{.Project}}" class="on"><code>{{.Project}}</code></a>
+    <a href="/memory">change</a>
+  </div>
+
+  {{if .Paths}}
+    <div class="lbl" style="margin-top:14px">Memory paths</div>
+    <div class="chips">
+      {{$p := .Project}}{{$sel := .Path}}
+      {{range .Paths}}<a href="/memory?project={{$p}}&path={{.}}"
+        class="{{if eq . $sel}}on{{end}}"><code>{{.}}</code></a>{{end}}
+    </div>
+  {{else}}
+    <div class="empty">This project has no memory yet.</div>
+  {{end}}
+
+  {{if .Path}}
+    <div class="card" style="margin-top:16px">
+      <div class="lbl">Version history — {{.Path}}</div>
+      <table style="margin-top:8px">
+        <thead><tr><th>Version</th><th>ETag</th><th>Modified</th><th></th></tr></thead>
+        <tbody>
+        {{$pp := .Project}}{{$path := .Path}}
+        {{range .Versions}}
+          <tr>
+            <td class="mono">{{if .VersionID}}{{truncate 18 .VersionID}}{{else}}—{{end}}</td>
+            <td class="mono ref">{{truncate 16 .ETag}}</td>
+            <td class="meta">{{.ModifiedAt}}</td>
+            <td><a href="/memory?project={{$pp}}&path={{$path}}&version={{.VersionID}}">view</a></td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    {{if .Content}}
+    <div class="card">
+      <div class="lbl">Content{{if .VersionID}} · version {{truncate 18 .VersionID}}{{else}} · latest{{end}}</div>
+      <pre>{{.Content}}</pre>
+    </div>
+    {{end}}
+  {{end}}
+{{end}}
+{{end}}

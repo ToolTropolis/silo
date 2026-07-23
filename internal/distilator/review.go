@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // ErrRunNotFound is returned when a run's proposal manifest doesn't exist.
@@ -29,6 +31,32 @@ type Reviewer struct {
 // NewReviewer wires a Reviewer to the output store and the CAS write path.
 func NewReviewer(s Store, w SafeWriter) *Reviewer {
 	return &Reviewer{store: s, writer: w}
+}
+
+// ListRuns returns the run IDs a project has, newest first. Needed by any
+// review surface (the dashboard, or `silo-distil`) to show what is pending
+// without already knowing a run ID.
+func (r *Reviewer) ListRuns(ctx context.Context, projectID string) ([]string, error) {
+	paths, err := r.store.List(ctx, projectID, OutputPrefix+"/")
+	if err != nil {
+		return nil, fmt.Errorf("distilator: list runs for %q: %w", projectID, err)
+	}
+	seen := map[string]bool{}
+	var runs []string
+	for _, p := range paths {
+		// paths look like _distilations/<run-id>/proposals.json
+		rest := strings.TrimPrefix(p, OutputPrefix+"/")
+		id, _, found := strings.Cut(rest, "/")
+		if !found || id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		runs = append(runs, id)
+	}
+	// Run IDs are time-ordered (distil-<unix-nano>), so reverse-lexicographic
+	// puts the newest first.
+	sort.Sort(sort.Reverse(sort.StringSlice(runs)))
+	return runs, nil
 }
 
 // LoadRun reads a run's proposal manifest from its output path.

@@ -1,0 +1,75 @@
+{{define "body"}}
+<h1>Distilator review</h1>
+<p class="sub">Proposed memory changes awaiting human approval. Approving writes
+through the daemon's CAS path; anything you leave unchecked is never written and
+the run's output is kept for audit.</p>
+
+{{if .Message}}<div class="note">{{.Message}}</div>{{end}}
+
+{{if not .Project}}
+  {{if .Projects}}
+    <div class="lbl">Select a project</div>
+    <div class="chips">
+      {{range .Projects}}<a href="/distilations?project={{.}}"><code>{{.}}</code></a>{{end}}
+    </div>
+  {{else}}
+    <div class="empty">No projects registered yet.</div>
+  {{end}}
+{{else}}
+  <div class="chips">
+    <span class="lbl">Project</span>
+    <a href="/distilations?project={{.Project}}" class="on"><code>{{.Project}}</code></a>
+    <a href="/distilations">change</a>
+  </div>
+
+  {{if .Runs}}
+    <div class="lbl" style="margin-top:14px">Runs (newest first)</div>
+    <div class="chips">
+      {{$p := .Project}}{{$sel := .RunID}}
+      {{range .Runs}}<a href="/distilations?project={{$p}}&run={{.}}"
+        class="{{if eq . $sel}}on{{end}}"><code>{{.}}</code></a>{{end}}
+    </div>
+  {{else}}
+    <div class="empty">No Distilator runs for this project yet.<br>
+      <code class="mono">silo-distil run --project={{.Project}}</code></div>
+  {{end}}
+
+  {{if .RunID}}
+    {{if .Proposals}}
+    <form method="POST" action="/promote">
+      <input type="hidden" name="project" value="{{.Project}}">
+      <input type="hidden" name="run" value="{{.RunID}}">
+      {{range .Proposals}}
+        <div class="card">
+          <label style="display:flex; gap:10px; align-items:flex-start; cursor:pointer">
+            <input type="checkbox" name="approve" value="{{.Path}}" style="margin-top:4px">
+            <span>
+              <code style="font-size:13.5px">{{.Path}}</code>
+              {{if .IsNew}}<span class="pill" style="margin-left:6px">new file</span>{{end}}
+              <span class="pill" style="margin-left:6px">prevalence {{pct .Prevalence}}</span>
+              <div class="meta" style="margin-top:6px">{{.Rationale}}</div>
+              <div class="meta" style="margin-top:4px">Evidence:
+                {{range .Evidence}}<code>{{.}}</code> {{end}}</div>
+            </span>
+          </label>
+          <div class="diff">
+            <div>
+              <div class="lbl">Current</div>
+              {{if .Current}}<pre>{{.Current}}</pre>{{else}}<pre class="meta">(path does not exist yet)</pre>{{end}}
+            </div>
+            <div>
+              <div class="lbl">Proposed</div>
+              <pre>{{.Proposed}}</pre>
+            </div>
+          </div>
+        </div>
+      {{end}}
+      <button type="submit">Promote checked proposals</button>
+      <span class="meta" style="margin-left:10px">Unchecked proposals are left alone.</span>
+    </form>
+    {{else}}
+      <div class="empty">This run proposed no changes.</div>
+    {{end}}
+  {{end}}
+{{end}}
+{{end}}
