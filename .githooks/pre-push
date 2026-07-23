@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Refuse a direct push to a protected branch.
+#
+# Branch model:
+#   feature/*  →  main  (dev / integration — open, merge freely)
+#                   ↓    release promotion, via PR
+#                 PRD   (production — protected)
+#
+# Why this exists: GitHub enforces branch-protection rules on private repos only
+# under Team/Enterprise. On the Free plan a configured ruleset is silently NOT
+# enforced, which is worse than none — it reads as protection that isn't there.
+# This hook covers the accidental-push case client-side instead.
+#
+# Scope and limits — this is a seatbelt, not a gate:
+#   - Client-side only. It does not apply to other clones or to the server.
+#   - Bypassable with `git push --no-verify` (deliberately: an emergency needs
+#     an escape hatch, and a hook that can't be bypassed gets deleted instead).
+# Real enforcement needs GitHub Team/Enterprise, or a public repo (see NAV-63).
+#
+# Enable with:  git config core.hooksPath .githooks
+set -euo pipefail
+
+# Production branches. `main` is deliberately absent — it is the dev branch.
+protected_branches="PRD"
+
+# git feeds pre-push one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ -z "${remote_ref:-}" ] && continue
+  branch="${remote_ref#refs/heads/}"
+
+  for protected in $protected_branches; do
+    if [ "$branch" = "$protected" ]; then
+      cat >&2 <<MSG
+
+  Refusing to push directly to '$protected' (production).
+
+  Production changes are promoted from main (dev) through a pull request, so
+  CI runs before anything reaches production:
+
+      gh pr create --base $protected --head main \\
+        --title "release: promote main to $protected"
+
+  If you genuinely need to bypass this (and you usually don't):
+      git push --no-verify
+
+MSG
+      exit 1
+    fi
+  done
+done
+
+exit 0

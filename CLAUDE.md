@@ -57,6 +57,11 @@ stays green without it.
 Don't commit, push, or tag on your own initiative — propose the commands. Use
 Conventional Commits (`feat:`/`fix:`/`docs:`/`chore:`); they drive the changelog.
 
+**Branches:** `main` is the **dev** branch (branch from it, merge into it).
+`PRD` is **production** — it only ever receives a promotion PR from `main`,
+never a direct push. A `.githooks/pre-push` hook refuses direct pushes to `PRD`
+(`git config core.hooksPath .githooks` to enable).
+
 - **No `Co-Authored-By` trailer in commits.**
 - Reference the Linear issue: put `(NAV-xx)` in the subject and `Ref NAV-xx` in
   the footer (`Ref` links without auto-closing).
