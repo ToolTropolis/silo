@@ -90,13 +90,23 @@ func (o *Orchestrator) Run(ctx context.Context, projectID, runID string, sinceHo
 		return nil, fmt.Errorf("distilator: propose changes for %q: %w", projectID, err)
 	}
 
-	// Reject any proposal targeting the output path — a provider must not be
-	// able to write into the run namespace (or a previous run's output).
+	// Validate what the provider returned before persisting it. A model can
+	// return a well-formed-but-empty proposal object; without this, an
+	// empty-path proposal is written to the manifest and only fails later, at
+	// promote time, with a confusing "not proposed by run" error.
+	kept := make([]ProposedChange, 0, len(proposals))
 	for _, p := range proposals {
 		if isReservedPath(p.Path) {
 			return nil, fmt.Errorf("distilator: proposal targets a reserved namespace (%q); refusing", p.Path)
 		}
+		if strings.TrimSpace(p.Path) == "" {
+			// Drop rather than fail the run: one malformed entry shouldn't
+			// discard the other genuine proposals in the batch.
+			continue
+		}
+		kept = append(kept, p)
 	}
+	proposals = kept
 
 	run := &Run{RunID: runID, ProjectID: projectID, Proposals: proposals}
 	if err := o.writeProposals(ctx, run); err != nil {

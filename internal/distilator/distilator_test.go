@@ -249,3 +249,28 @@ func TestRun_RequiresIDs(t *testing.T) {
 		t.Fatal("empty runID should error")
 	}
 }
+
+// TestRun_DropsEmptyPathProposals: a provider can return a well-formed but
+// empty proposal object. Persisting it would put a useless entry in the
+// manifest that only fails later, at promote time, with a confusing
+// "not proposed by run" error. Drop it, but keep the valid ones.
+func TestRun_DropsEmptyPathProposals(t *testing.T) {
+	store := seededStore()
+	provider := &fakeProvider{proposals: []ProposedChange{
+		{Path: "", NewContent: []byte("junk")},            // empty — drop
+		{Path: "   ", NewContent: []byte("junk")},         // whitespace — drop
+		{Path: "memory/real.md", NewContent: []byte("x")}, // valid — keep
+	}}
+	o := NewOrchestrator(provider, store, oneSession())
+
+	run, err := o.Run(context.Background(), proj, "run-empty", 24, "")
+	if err != nil {
+		t.Fatalf("one malformed proposal should not fail the run: %v", err)
+	}
+	if len(run.Proposals) != 1 {
+		t.Fatalf("want 1 kept proposal, got %d: %+v", len(run.Proposals), run.Proposals)
+	}
+	if run.Proposals[0].Path != "memory/real.md" {
+		t.Fatalf("kept the wrong proposal: %q", run.Proposals[0].Path)
+	}
+}
