@@ -40,8 +40,13 @@ type Client interface {
 
 // SearchResult is one match from Search.
 type SearchResult struct {
-	Path    string
-	Snippet string
+	Path    string `json:"Path"`
+	Snippet string `json:"Snippet"`
 }
 
-var errNotImplemented = errors.New("client: not implemented")
+// ErrNotFound is returned by Read when no content exists at the path.
+var ErrNotFound = errors.New("client: not found")
+
+// ErrUnauthorized is returned when the token is missing, unknown, or not scoped
+// to the requested project.
+var ErrUnauthorized = errors.New("client: unauthorized")

@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -64,6 +66,27 @@ func (m *mapBackend) Put(_ context.Context, projectID, path string, content []by
 
 func (m *mapBackend) ListVersions(context.Context, string, string) ([]backend.ObjectVersion, error) {
 	return nil, nil
+}
+
+func (m *mapBackend) ListPaths(_ context.Context, projectID, prefix string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.down {
+		return nil, errBackendDown
+	}
+	want := projectID + "/"
+	var out []string
+	for k := range m.objs {
+		if !strings.HasPrefix(k, want) {
+			continue
+		}
+		p := strings.TrimPrefix(k, want)
+		if strings.HasPrefix(p, prefix) {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out) // deterministic for tests
+	return out, nil
 }
 func (m *mapBackend) Delete(context.Context, string, string) error { return nil }
 func (m *mapBackend) CreateBucket(context.Context, string) error   { return nil }
