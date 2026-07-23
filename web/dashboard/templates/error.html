@@ -1,0 +1,14 @@
+{{define "error.html"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Silo — error</title>
+<style>body{margin:0;background:#fbfbfa;color:#1a1a19;
+font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media(prefers-color-scheme:dark){body{background:#161615;color:#e8e8e6}}
+main{padding:40px 24px;max-width:760px}h1{font-size:18px;margin:0 0 8px}
+pre{background:#0000000d;border-radius:6px;padding:12px 14px;overflow-x:auto;
+font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+a{color:#7a5cff}</style></head>
+<body><main>
+<h1>{{.View}} view unavailable</h1>
+<pre>{{.Error}}</pre>
+<p><a href="/">← back to registry</a></p>
+</main></body></html>{{end}}

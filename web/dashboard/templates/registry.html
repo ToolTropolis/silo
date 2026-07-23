@@ -1,0 +1,31 @@
+{{define "body"}}
+<h1>Tenant registry</h1>
+<p class="sub">Every project and its state. Read-only — credential and key columns
+show <strong>references</strong>, never secrets. Teardown runs only via
+<code>siloctl</code>.</p>
+
+{{if .Projects}}
+<table>
+  <thead>
+    <tr><th>Project</th><th>Status</th><th>Bucket</th><th>Credential ref</th>
+        <th>Key ref</th><th>Created</th><th>Next step</th></tr>
+  </thead>
+  <tbody>
+  {{range .Projects}}
+    <tr>
+      <td><a href="/memory?project={{.ProjectID}}"><code>{{.ProjectID}}</code></a></td>
+      <td><span class="pill {{.Status}}">{{.Status}}</span></td>
+      <td class="mono">{{.BucketName}}</td>
+      <td class="mono ref">{{truncate 22 .CredentialID}}</td>
+      <td class="mono ref">{{truncate 22 .KeyID}}</td>
+      <td class="meta">{{.CreatedAt}}</td>
+      <td class="meta">{{.NextStep}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty">No projects registered yet.<br>
+<code class="mono">siloctl onboard --project=&lt;id&gt;</code></div>
+{{end}}
+{{end}}
