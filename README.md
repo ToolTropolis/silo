@@ -121,6 +121,27 @@ silo-distil promote --project=proj-11 --run-id=<id> --paths=memory/conventions.m
 silo-dashboard --listen 127.0.0.1:8600   # http://127.0.0.1:8600
 ```
 
+### Decommissioning a project
+
+Teardown is deliberately **manual, one confirmed layer at a time** — there is no
+flag that runs all four steps:
+
+```bash
+siloctl teardown --project=proj-11 --step=revoke-credential  # 1. revoke S3 access
+siloctl teardown --project=proj-11 --step=revoke-key         # 2. destroy the SSE key
+siloctl teardown --project=proj-11 --step=delete-bucket      # 3. IRREVERSIBLE
+siloctl teardown --project=proj-11 --step=deregister         # 4. remove the record
+```
+
+Ordering is enforced against the registry record, so a step can't be skipped or
+replayed — access is revoked before data is destroyed. The reversible steps
+prompt `[y/N]`; **`delete-bucket` requires typing the project ID**, because a
+reflexive "y" shouldn't be able to destroy every version of a project's memory.
+`--yes` skips the prompt for scripted use but never bypasses the one-step-per-
+invocation rule. The record moves to `decommissioning` after step 1 and
+`decommissioned` after step 4, so an interrupted teardown is visible in the
+registry and the dashboard.
+
 ### Dashboard
 
 `silo-dashboard` serves the v1 read/review surface — the tenant registry, a

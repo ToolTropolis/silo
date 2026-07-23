@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/tooltropolis/silo/internal/admin"
 )
 
 // TestOnboard_RequiresS3Credentials is a regression guard.
@@ -50,5 +53,105 @@ func TestOnboard_AcceptsCredentialsFromEnv(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "S3 admin credentials required") {
 		t.Fatalf("credentials from env should satisfy validation; got: %v", err)
+	}
+}
+
+// --- teardown confirmation gate -------------------------------------------
+
+// TestTeardown_RequiresStep is the spec §5 guarantee: teardown cannot run as a
+// single command. There is no flag that performs all four layers, and omitting
+// --step is an error rather than a default.
+func TestTeardown_RequiresStep(t *testing.T) {
+	t.Setenv("SILO_S3_ACCESS_KEY", "AK")
+	t.Setenv("SILO_S3_SECRET_KEY", "SK")
+
+	err := runTeardown([]string{"--project=p1", "--vault-token=t"})
+	if err == nil {
+		t.Fatal("teardown without --step must fail")
+	}
+	if !strings.Contains(err.Error(), "one confirmed layer at a time") {
+		t.Errorf("error should explain the per-layer rule; got: %v", err)
+	}
+}
+
+func TestTeardown_RejectsUnknownStep(t *testing.T) {
+	t.Setenv("SILO_S3_ACCESS_KEY", "AK")
+	t.Setenv("SILO_S3_SECRET_KEY", "SK")
+
+	err := runTeardown([]string{"--project=p1", "--step=nuke-it-all", "--vault-token=t"})
+	if !errors.Is(err, admin.ErrUnknownStep) {
+		t.Fatalf("want ErrUnknownStep, got %v", err)
+	}
+}
+
+// TestConfirmStep_ReversibleStepsWantYes covers the ordinary prompt.
+func TestConfirmStep_ReversibleStepsWantYes(t *testing.T) {
+	for _, step := range []admin.TeardownStep{
+		admin.StepRevokeCredential, admin.StepRevokeKey, admin.StepDeregister,
+	} {
+		if err := confirmStep(strings.NewReader("y\n"), &strings.Builder{}, "p1", step, false); err != nil {
+			t.Errorf("%q with 'y': %v", step, err)
+		}
+		if err := confirmStep(strings.NewReader("n\n"), &strings.Builder{}, "p1", step, false); err == nil {
+			t.Errorf("%q with 'n' should abort", step)
+		}
+		// A bare Enter must abort — the prompt is [y/N].
+		if err := confirmStep(strings.NewReader("\n"), &strings.Builder{}, "p1", step, false); err == nil {
+			t.Errorf("%q with empty input should abort", step)
+		}
+	}
+}
+
+// TestConfirmStep_IrreversibleNeedsProjectID: a reflexive "y" must not be able
+// to delete a bucket. The operator has to type the project ID.
+func TestConfirmStep_IrreversibleNeedsProjectID(t *testing.T) {
+	step := admin.StepDeleteBucket
+
+	if err := confirmStep(strings.NewReader("y\n"), &strings.Builder{}, "proj-11", step, false); err == nil {
+		t.Fatal("'y' must NOT confirm the irreversible step")
+	}
+	if err := confirmStep(strings.NewReader("proj-99\n"), &strings.Builder{}, "proj-11", step, false); err == nil {
+		t.Fatal("a different project ID must not confirm")
+	}
+	if err := confirmStep(strings.NewReader("proj-11\n"), &strings.Builder{}, "proj-11", step, false); err != nil {
+		t.Fatalf("typing the exact project ID should confirm: %v", err)
+	}
+}
+
+// TestConfirmStep_WarnsBeforeIrreversible: the operator must be told what is
+// about to be destroyed.
+func TestConfirmStep_WarnsBeforeIrreversible(t *testing.T) {
+	var out strings.Builder
+	_ = confirmStep(strings.NewReader("proj-11\n"), &out, "proj-11", admin.StepDeleteBucket, false)
+	text := out.String()
+	for _, want := range []string{"IRREVERSIBLE", "cannot be undone", "proj-11"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("irreversible prompt missing %q; got: %s", want, text)
+		}
+	}
+}
+
+// TestConfirmStep_YesFlagSkipsPromptOnly confirms --yes bypasses the prompt for
+// scripted use but does not bypass the one-step-per-invocation rule (that is
+// enforced by --step being required, covered above).
+func TestConfirmStep_YesFlagSkipsPrompt(t *testing.T) {
+	for _, step := range []admin.TeardownStep{admin.StepRevokeCredential, admin.StepDeleteBucket} {
+		if err := confirmStep(strings.NewReader(""), &strings.Builder{}, "p1", step, true); err != nil {
+			t.Errorf("--yes should skip the prompt for %q: %v", step, err)
+		}
+	}
+}
+
+func TestNextStep(t *testing.T) {
+	cases := map[admin.TeardownStep]admin.TeardownStep{
+		admin.StepRevokeCredential: admin.StepRevokeKey,
+		admin.StepRevokeKey:        admin.StepDeleteBucket,
+		admin.StepDeleteBucket:     admin.StepDeregister,
+		admin.StepDeregister:       "", // last
+	}
+	for step, want := range cases {
+		if got := nextStep(step); got != want {
+			t.Errorf("nextStep(%q) = %q, want %q", step, got, want)
+		}
 	}
 }
