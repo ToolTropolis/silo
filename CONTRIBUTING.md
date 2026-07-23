@@ -67,6 +67,21 @@ not a gate — it is client-side and bypassable with `--no-verify`. Server-side
 enforcement needs GitHub Team/Enterprise (branch protection is not enforced on
 private repos on the Free plan).
 
+## Secret scanning
+
+Three independent layers, because the first one silently did nothing for a
+while and nobody noticed:
+
+| Layer | Covers | Requires |
+|---|---|---|
+| `.githooks/pre-commit` | any local commit | `git config core.hooksPath .githooks` |
+| `.claude/settings.json` PreToolUse hook | commits made by Claude Code | nothing — ships with the repo |
+| CI (`.github/workflows/ci.yaml`) | every push and PR | nothing |
+
+CI is the backstop that always runs. The two commit-time hooks are a faster
+signal, not the only defense. **Never bypass a secret-scan failure with
+`--no-verify`** — remove the secret instead.
+
 ## Proposing a change
 
 1. **Open an issue first** for anything non-trivial (see the
