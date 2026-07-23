@@ -1,22 +1,31 @@
 # Local development stack for Silo: SeaweedFS (durable backend), a 3-node rqlite
-# cluster (tenant registry with Raft HA), and Vault in dev mode (KMS).
+# cluster (tenant registry with Raft HA), and Vault (KMS).
 #
-#   docker compose -f deploy/docker-compose.yaml up
+#   docker compose -f deploy/docker-compose.yaml up -d
+#   deploy/bootstrap-dev.sh     # init/unseal Vault + provision the S3 admin identity
 #
-# DEV-ONLY. Vault runs in dev mode with a fixed root token and the services are
-# unauthenticated on localhost — never use this configuration in production.
+# DATA PERSISTS across `docker compose down` and container restarts — every
+# service writes to a named volume. To wipe the stack and start clean:
+#
+#   docker compose -f deploy/docker-compose.yaml down -v
+#
+# DEV-ONLY. TLS is disabled everywhere and the credentials are throwaway local
+# values. Never use this configuration in production.
 services:
   seaweedfs:
     image: chrislusf/seaweedfs
     # The filer gRPC port (HTTP port + 10000 = 18888) is published so Silo's
     # credential issuer can write per-project S3 identities via the filer
     # ConfigurationApi.
-    command: "server -s3 -s3.port=8333"
+    command: "server -s3 -s3.port=8333 -dir=/data"
     ports:
       - "8333:8333"    # S3 API
       - "9333:9333"    # master UI
       - "8888:8888"    # filer HTTP
       - "18888:18888"  # filer gRPC (S3 identity config)
+    volumes:
+      # Object data, bucket volumes, and the filer's S3 identity config.
+      - seaweedfs-data:/data
 
   # Each node publishes a distinct host port AND advertises a host-reachable
   # HTTP address (-http-adv-addr). Without the advertised address, rqlite
@@ -25,33 +34,63 @@ services:
   # three are published so a client can follow a failover to any node.
   rqlite1:
     image: rqlite/rqlite
-    command: ["-node-id", "1", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4001", "-raft-addr", "0.0.0.0:4002"]
+    hostname: rqlite1
+    command: ["-node-id", "1", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4001", "-raft-addr", "0.0.0.0:4002", "-raft-adv-addr", "rqlite1:4002"]
     ports:
       - "4001:4001"
+    volumes:
+      - rqlite1-data:/rqlite/file
 
   rqlite2:
     image: rqlite/rqlite
-    command: ["-node-id", "2", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4003", "-raft-addr", "0.0.0.0:4002", "-join", "rqlite1:4002"]
+    hostname: rqlite2
+    command: ["-node-id", "2", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4003", "-raft-addr", "0.0.0.0:4002", "-raft-adv-addr", "rqlite2:4002", "-join", "rqlite1:4002"]
     ports:
       - "4003:4001"
+    volumes:
+      - rqlite2-data:/rqlite/file
     depends_on:
       - rqlite1
 
   rqlite3:
     image: rqlite/rqlite
-    command: ["-node-id", "3", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4005", "-raft-addr", "0.0.0.0:4002", "-join", "rqlite1:4002"]
+    hostname: rqlite3
+    command: ["-node-id", "3", "-http-addr", "0.0.0.0:4001", "-http-adv-addr", "localhost:4005", "-raft-addr", "0.0.0.0:4002", "-raft-adv-addr", "rqlite3:4002", "-join", "rqlite1:4002"]
     ports:
       - "4005:4001"
+    volumes:
+      - rqlite3-data:/rqlite/file
     depends_on:
       - rqlite1
 
   vault:
     image: hashicorp/vault
+    # Server mode with file storage, NOT `-dev`. Dev mode is in-memory, so a
+    # plain `docker restart` silently destroyed every per-project SSE key while
+    # the registry still referenced it. Requires init + unseal — run
+    # deploy/bootstrap-dev.sh, which is idempotent.
+    #
+    # entrypoint is overridden to call `vault` directly: the image's
+    # docker-entrypoint.sh injects its own listener config when it sees the
+    # `server` subcommand, which collides with the listener in vault.hcl and
+    # fails with "address already in use" — two listeners on 8200 in one process.
+    entrypoint: ["vault"]
+    command: ["server", "-config=/vault/config/vault.hcl"]
     cap_add:
       - IPC_LOCK
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
+      VAULT_ADDR: "http://127.0.0.1:8200"
     ports:
       # Host 8201 (not 8200) so Silo's Vault coexists with other local stacks
       # that already publish 8200. Container port stays 8200 internally.
       - "8201:8200"
+    volumes:
+      - ./vault.hcl:/vault/config/vault.hcl:ro
+      - vault-data:/vault/file
+
+volumes:
+  seaweedfs-data:
+  rqlite1-data:
+  rqlite2-data:
+  rqlite3-data:
+  vault-data:

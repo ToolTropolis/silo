@@ -65,7 +65,8 @@ docs/         architecture.md
 # 1. Stand up local dependencies: SeaweedFS, a 3-node rqlite cluster, Vault (dev).
 docker compose -f deploy/docker-compose.yaml up -d
 
-# 2. Provision the silo-admin S3 identity the backend authenticates as.
+# 2. Initialize/unseal Vault and provision the silo-admin S3 identity.
+#    Idempotent — re-run after every `up` (Vault seals on restart).
 deploy/bootstrap-dev.sh
 
 # 3. Build everything.
@@ -78,6 +79,17 @@ go test ./...
 The local defaults in [`configs/example.yaml`](configs/example.yaml) point at
 the compose services. **These are dev-only values** — production config comes
 from environment variables or a secrets manager, never a checked-in file.
+
+> **Data persists.** Every service writes to a named Docker volume, so the
+> registry, memory objects, and per-project encryption keys survive
+> `docker compose down` and container restarts. To wipe the stack and start
+> clean, use `docker compose -f deploy/docker-compose.yaml down -v`.
+>
+> Vault runs in **server mode with file storage**, not `-dev`. Dev mode keeps
+> everything in memory, so a plain `docker restart` silently destroyed every
+> per-project SSE key while the registry still referenced it. The tradeoff is
+> that Vault seals on restart — `deploy/bootstrap-dev.sh` unseals it and is
+> safe to re-run.
 
 > **Isolation note.** Silo's guarantee is per-project isolation: onboarding
 > issues each project a SeaweedFS identity scoped Read/Write to *only* its own
