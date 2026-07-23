@@ -100,6 +100,16 @@ from environment variables or a secrets manager, never a checked-in file.
 > covered by an integration test that drives one project's credential against
 > another's bucket and asserts it's refused.
 
+## Onboarding your own repo
+
+To give one of your repositories its own isolated memory silo — provisioning,
+running the daemon, and reading/writing its memory — follow
+[`docs/onboarding-a-repo.md`](docs/onboarding-a-repo.md).
+
+Note that there is **no agent-framework adapter yet**: the SDK exists, but
+nothing in Claude Code (or any other framework) calls it automatically. The
+guide covers what works today and sketches the integration options.
+
 ## Exercising the full cycle by hand
 
 The end-to-end loop from the v1 definition of done. Everything below is
