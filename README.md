@@ -54,6 +54,11 @@ deploy/       docker-compose.yaml (SeaweedFS + 3-node rqlite + Vault) + migratio
 docs/         architecture.md
 ```
 
+## Quickstart
+
+New here? [**docs/QUICKSTART.md**](docs/QUICKSTART.md) takes you from clone to
+storing and reading a piece of agent memory in about five minutes.
+
 ## Requirements
 
 - **Go 1.26+**
