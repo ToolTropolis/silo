@@ -193,6 +193,15 @@ fi
 # made themselves.
 mkdir -p "$BIN_DIR" 2>/dev/null || true
 
+# Linking a directory to itself replaces each binary with a link to itself, and
+# the failure surfaces later as "Too many levels of symbolic links" from
+# whatever tries to run it — far from the cause. Refuse it here instead.
+if [ "$(cd "$INSTALL_DIR" 2>/dev/null && pwd -P)" = "$(cd "$BIN_DIR" 2>/dev/null && pwd -P)" ]; then
+  die "SILO_INSTALL_DIR and SILO_BIN_DIR are the same directory (${BIN_DIR}).
+The symlinks are created in SILO_BIN_DIR pointing at SILO_INSTALL_DIR, so these
+must differ. Set only SILO_INSTALL_DIR to put the binaries somewhere specific."
+fi
+
 SUDO=""
 if [ ! -w "$BIN_DIR" ]; then
   if command -v sudo >/dev/null 2>&1; then

@@ -35,6 +35,29 @@ That starts the stack, bootstraps Vault, creates an isolated project, runs the
 daemon, then **writes and reads back a memory file** — printing every command it
 runs, so nothing is hidden. About a minute, most of it Docker.
 
+<details>
+<summary>Don't want to clone? (no Go toolchain needed either)</summary>
+
+Silo runs on SeaweedFS, rqlite, and Vault, so you need the compose file that
+defines them — but not the whole repo. Five files from `deploy/` are enough:
+
+```bash
+mkdir -p silo-demo/deploy && cd silo-demo
+BASE=https://raw.githubusercontent.com/ToolTropolis/silo/main/deploy
+for f in docker-compose.yaml bootstrap-dev.sh demo.sh vault.hcl weed-docker.sh; do
+  curl -fsSL "$BASE/$f" -o "deploy/$f"
+done
+chmod +x deploy/*.sh
+
+deploy/demo.sh
+```
+
+With no sources present, `demo.sh` fetches the **released** binaries instead of
+building them — checksum-verified against the signed manifest. Same demo, no
+clone, no Go.
+
+</details>
+
 At the end you get a dashboard URL where that file already has two versions.
 Tear it down with `deploy/demo.sh --down`.
 
