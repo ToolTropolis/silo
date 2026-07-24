@@ -65,18 +65,37 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// ListenAndServe serves on addr. A path (no colon) is treated as a Unix socket;
-// anything else as a TCP address.
-func (s *Server) ListenAndServe(addr string) error {
+// Listen binds addr without serving. A path (no colon) is treated as a Unix
+// socket; anything else as a TCP address.
+//
+// Separate from Serve so a caller can report "listening on X" only after the
+// bind actually succeeded. Printing before the bind makes a port conflict look
+// like a successful start, and the next symptom — every request failing
+// against whatever process already owns the port — is baffling.
+func (s *Server) Listen(addr string) (net.Listener, error) {
 	network := "tcp"
 	if !strings.Contains(addr, ":") {
 		network = "unix"
 	}
 	ln, err := net.Listen(network, addr)
 	if err != nil {
-		return fmt.Errorf("daemon: listen %s %s: %w", network, addr, err)
+		return nil, fmt.Errorf("daemon: listen %s %s: %w", network, addr, err)
 	}
+	return ln, nil
+}
+
+// Serve handles requests on an already-bound listener.
+func (s *Server) Serve(ln net.Listener) error {
 	return http.Serve(ln, s.Handler())
+}
+
+// ListenAndServe binds and serves in one call.
+func (s *Server) ListenAndServe(addr string) error {
+	ln, err := s.Listen(addr)
+	if err != nil {
+		return err
+	}
+	return s.Serve(ln)
 }
 
 // authorize resolves the request's bearer token to its project scope.

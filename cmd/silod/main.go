@@ -63,8 +63,14 @@ func run(args []string) error {
 	d := daemon.New(be, localCache, nil, nil)
 	srv := daemon.NewServer(d, verifier)
 
+	// Bind first, then announce. Printing before the bind makes a port conflict
+	// look like a successful start.
+	ln, err := srv.Listen(*listen)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("silod: listening on %s (%d token(s))\n", *listen, len(verifier))
-	return srv.ListenAndServe(*listen)
+	return srv.Serve(ln)
 }
 
 // parseTokens turns "tok1=projA,tok2=projB" into a verifier. Each token is
