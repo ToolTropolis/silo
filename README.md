@@ -1,4 +1,4 @@
-# Silo
+<img src="docs/brand/logo-wordmark.svg" alt="Silo" height="56">
 
 **Silo** is a pluggable Go connector that gives any repo's agent fleet
 **persistent, versioned, multi-tenant memory** with an out-of-band consolidation
