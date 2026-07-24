@@ -174,6 +174,20 @@ func (r *Rqlite) UpdateRefs(ctx context.Context, projectID, keyID, credentialID 
 	return nil
 }
 
+func (r *Rqlite) ClearBucket(ctx context.Context, projectID string) error {
+	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     `UPDATE projects SET bucket_name = '' WHERE project_id = ?`,
+		Arguments: []interface{}{projectID},
+	})
+	if err != nil {
+		return fmt.Errorf("registry: clear bucket %q: %w", projectID, err)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *Rqlite) Deregister(ctx context.Context, projectID string) error {
 	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
 		Query:     `DELETE FROM projects WHERE project_id = ?`,

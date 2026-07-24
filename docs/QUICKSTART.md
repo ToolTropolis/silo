@@ -168,8 +168,16 @@ manual and destructive):
 # ...then --step=revoke-key, --step=delete-bucket, --step=deregister
 ```
 
-`delete-bucket` makes you type the project ID — a reflexive "y" shouldn't be
-able to destroy every version of a project's memory.
+Each step prints the next one, and the order is enforced against the registry —
+a step won't run early or twice, so an interrupted teardown resumes safely
+rather than stranding a bucket. To see where a project stands:
+
+```bash
+./bin/siloctl status
+```
+
+`delete-bucket` makes you **type the project ID** (not `y`) — a reflexive "y"
+shouldn't be able to destroy every version of a project's memory.
 
 Or stop the whole stack:
 
@@ -197,3 +205,4 @@ docker compose -f deploy/docker-compose.yaml down -v  # wipe everything
 | `leader not found` | rqlite still forming — wait ~15 s |
 | Daemon returns `unauthorized` | Token isn't in `--tokens` |
 | Daemon returns `not found` for a path you wrote | Wrong project's token — tokens are scoped to one project |
+| Teardown says `not ready for <step>` | Steps run in order; it names the step that's due. `siloctl status` shows where the project stands. |
