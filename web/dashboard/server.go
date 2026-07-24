@@ -23,6 +23,12 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
+// Brand assets are embedded so the binary stays self-contained — a dashboard
+// that needs files next to it on disk is one more thing to get wrong at deploy.
+//
+//go:embed static/favicon.ico static/logo.svg
+var staticFS embed.FS
+
 // Registry is the read-only slice of the tenant registry the dashboard needs.
 type Registry interface {
 	List(ctx context.Context) ([]registry.ProjectRecord, error)
@@ -88,6 +94,25 @@ func (s *Server) routes() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	// Brand assets. Long-cached: these change only when the logo does, and
+	// browsers request /favicon.ico on every cold load.
+	s.mux.HandleFunc("/favicon.ico", serveAsset("static/favicon.ico", "image/x-icon"))
+	s.mux.HandleFunc("/logo.svg", serveAsset("static/logo.svg", "image/svg+xml"))
+}
+
+// serveAsset returns a handler for one embedded static file.
+func serveAsset(name, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := staticFS.ReadFile(name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(data)
+	}
 }
 
 // Handler exposes the routed handler for the process to serve.
