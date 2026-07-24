@@ -58,28 +58,18 @@ jobs:
 
       # Sign the manifest rather than each binary: the manifest already commits
       # to every artifact's hash, so one signature covers the whole release and
-      # verification stays a two-step check (verify signature, then sha256sum -c).
+      # verification stays a two-step check (verify the bundle, then sha256sum -c).
       #
-      # Emits BOTH formats deliberately. Current cosign defaults to the bundle
-      # format and ignores --output-signature/--output-certificate, so a bundle
-      # is what actually gets produced; but detached .sig/.pem is what every
-      # existing verification snippet in the wild passes, and dropping it would
-      # break anyone following older instructions. The two --bundle runs are
-      # separate signing operations, each with its own ephemeral key and Rekor
-      # entry — both are valid signatures over the same manifest.
+      # Bundle format only. cosign v3 emits a Sigstore bundle by default and
+      # REFUSES --new-bundle-format=false, so detached .sig/.pem can no longer
+      # be produced at all — an earlier attempt to publish both failed here.
+      # The bundle carries the certificate and Rekor inclusion proof in one
+      # file, so it is strictly more self-contained than what it replaces.
       - name: Sign the checksums manifest
         working-directory: dist
         run: |
-          # Bundle format (current cosign default; includes cert + Rekor proof).
           cosign sign-blob --yes \
             --bundle SHA256SUMS.txt.bundle \
-            SHA256SUMS.txt
-
-          # Detached signature + certificate, for older verifiers.
-          cosign sign-blob --yes \
-            --new-bundle-format=false \
-            --output-signature SHA256SUMS.txt.sig \
-            --output-certificate SHA256SUMS.txt.pem \
             SHA256SUMS.txt
 
           ls -la SHA256SUMS.txt*
@@ -90,23 +80,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # Fail the release rather than publish an unverifiable signature.
-          IDENTITY="^https://github.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/"
-
-          echo "--- verifying bundle ---"
+          # The identity must be this repo's release workflow at a tag — not
+          # merely a valid Sigstore certificate, which any Actions run can mint.
           cosign verify-blob \
             --bundle SHA256SUMS.txt.bundle \
-            --certificate-identity-regexp "$IDENTITY" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            SHA256SUMS.txt
-
-          # verify-blob also defaults to the bundle format, so the detached
-          # check must opt out explicitly or cosign looks for a bundle.
-          echo "--- verifying detached signature ---"
-          cosign verify-blob \
-            --new-bundle-format=false \
-            --signature SHA256SUMS.txt.sig \
-            --certificate SHA256SUMS.txt.pem \
-            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-identity-regexp "^https://github.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS.txt
 

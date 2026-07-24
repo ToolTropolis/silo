@@ -140,8 +140,9 @@ if command -v cosign >/dev/null 2>&1; then
   ISSUER="https://token.actions.githubusercontent.com"
   sig_result=""
 
-  # Prefer the bundle: it is cosign's current default and carries the
-  # certificate and Rekor proof in one file.
+  # Releases publish a Sigstore bundle, which carries the certificate and Rekor
+  # inclusion proof in one file. cosign v3 refuses to emit the older detached
+  # .sig/.pem pair, so there is no second format to fall back to.
   if fetch "${BASE}/SHA256SUMS.txt.bundle" "${TMP}/SHA256SUMS.txt.bundle" 2>/dev/null; then
     if cosign verify-blob \
          --bundle "${TMP}/SHA256SUMS.txt.bundle" \
@@ -150,23 +151,6 @@ if command -v cosign >/dev/null 2>&1; then
          "${TMP}/SHA256SUMS.txt" >/dev/null 2>&1; then
       sig_result="ok"
     else
-      sig_result="failed"
-    fi
-  fi
-
-  # Fall back to the detached signature (older releases, older cosign).
-  if [ "$sig_result" != "ok" ] &&
-     fetch "${BASE}/SHA256SUMS.txt.sig" "${TMP}/SHA256SUMS.txt.sig" 2>/dev/null &&
-     fetch "${BASE}/SHA256SUMS.txt.pem" "${TMP}/SHA256SUMS.txt.pem" 2>/dev/null; then
-    if cosign verify-blob \
-         --new-bundle-format=false \
-         --signature "${TMP}/SHA256SUMS.txt.sig" \
-         --certificate "${TMP}/SHA256SUMS.txt.pem" \
-         --certificate-identity-regexp "$IDENTITY" \
-         --certificate-oidc-issuer "$ISSUER" \
-         "${TMP}/SHA256SUMS.txt" >/dev/null 2>&1; then
-      sig_result="ok"
-    elif [ -z "$sig_result" ]; then
       sig_result="failed"
     fi
   fi
