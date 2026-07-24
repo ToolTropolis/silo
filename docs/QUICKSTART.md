@@ -22,6 +22,22 @@ a memory file you wrote and read back through the API.
 
 ---
 
+## Just the binaries
+
+No clone, no Go toolchain:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ToolTropolis/silo/main/docs/install.sh | sh
+```
+
+Installs `silod`, `siloctl`, `silo-distil`, and `silo-dashboard` to `~/.silo/bin`,
+verifying the SHA-256 of every binary against the release's signed manifest — and
+the cosign signature too, if you have cosign. Prefer `go install`? See
+[installing.md](installing.md).
+
+That gives you the binaries. Silo also needs a storage stack (SeaweedFS, rqlite,
+Vault), so to actually *run* something, keep reading.
+
 ## The fast path
 
 ```bash
