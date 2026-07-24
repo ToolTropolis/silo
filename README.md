@@ -54,6 +54,16 @@ deploy/       docker-compose.yaml (SeaweedFS + 3-node rqlite + Vault) + migratio
 docs/         architecture.md
 ```
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ToolTropolis/silo/main/docs/install.sh | sh
+```
+
+Prebuilt binaries for macOS and Linux (amd64/arm64), checksum-verified against a
+cosign-signed manifest. Windows, `go install`, and build-from-source are in
+[docs/installing.md](docs/installing.md).
+
 ## Quickstart
 
 ```bash
