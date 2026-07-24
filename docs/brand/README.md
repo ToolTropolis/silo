@@ -50,3 +50,11 @@ bands merge into texture rather than mud. Verified at 16/32/48px.
 Hand-authored geometric mark, not a professional identity. It's honest,
 legible, and consistent — good enough to ship. If Silo ever needs a real brand,
 this is a starting point to hand a designer, not a finished system.
+
+## favicon.ico
+
+Multi-resolution icon (16/32/48/64/128/256) built from `logo-512.png`, used by
+the dashboard and as the repo icon.
+
+`web/dashboard/static/` holds a copy because `go:embed` cannot reference paths
+outside its own package directory. Regenerate both together if the mark changes.

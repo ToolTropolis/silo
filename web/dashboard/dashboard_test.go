@@ -334,3 +334,31 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("healthz = %d %q", code, body)
 	}
 }
+
+// TestServesBrandAssets: the favicon must be served from the embedded FS, not
+// swallowed by the catch-all 404 that guards every other unknown path.
+func TestServesBrandAssets(t *testing.T) {
+	srv := newTestServer(t, &fakeRegistry{}, nil, nil)
+
+	for _, tc := range []struct{ path, contentType string }{
+		{"/favicon.ico", "image/x-icon"},
+		{"/logo.svg", "image/svg+xml"},
+	} {
+		resp, err := srv.Client().Get(srv.URL + tc.path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", tc.path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: status %d, want 200", tc.path, resp.StatusCode)
+		}
+		if got := resp.Header.Get("Content-Type"); got != tc.contentType {
+			t.Errorf("%s: content-type %q, want %q", tc.path, got, tc.contentType)
+		}
+		if len(body) == 0 {
+			t.Errorf("%s: empty body", tc.path)
+		}
+	}
+}
