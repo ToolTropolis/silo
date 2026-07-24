@@ -142,16 +142,8 @@ func TestConfirmStep_YesFlagSkipsPrompt(t *testing.T) {
 	}
 }
 
-func TestNextStep(t *testing.T) {
-	cases := map[admin.TeardownStep]admin.TeardownStep{
-		admin.StepRevokeCredential: admin.StepRevokeKey,
-		admin.StepRevokeKey:        admin.StepDeleteBucket,
-		admin.StepDeleteBucket:     admin.StepDeregister,
-		admin.StepDeregister:       "", // last
-	}
-	for step, want := range cases {
-		if got := nextStep(step); got != want {
-			t.Errorf("nextStep(%q) = %q, want %q", step, got, want)
-		}
-	}
-}
+// The CLI's own positional nextStep() is gone: it computed "what follows the
+// step just run" without consulting the registry, so after a wrongly-permitted
+// deregister it reported the project fully decommissioned while its bucket was
+// still live. admin.NextStep derives the answer from the record instead, and is
+// covered by TestNextStep_ReportsTruePosition in the admin package.

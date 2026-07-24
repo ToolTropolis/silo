@@ -39,7 +39,16 @@ func (r *tdRegistry) UpdateStatus(_ context.Context, _, status string) error {
 	return nil
 }
 func (r *tdRegistry) Deregister(context.Context, string) error { r.deregister++; return nil }
-func (r *tdRegistry) UpdateRefs(context.Context, string, string, string) error {
+
+// UpdateRefs and ClearBucket mutate the stored record the way rqlite does —
+// teardown derives its ordering from these fields, so a fake that ignored the
+// writes would let out-of-order steps pass in tests but fail in production.
+func (r *tdRegistry) UpdateRefs(_ context.Context, _, keyID, credentialID string) error {
+	r.rec.KeyID, r.rec.CredentialID = keyID, credentialID
+	return nil
+}
+func (r *tdRegistry) ClearBucket(context.Context, string) error {
+	r.rec.BucketName = ""
 	return nil
 }
 
@@ -90,14 +99,25 @@ func (c *tdCreds) Revoke(_ context.Context, credID string) error {
 
 // newTeardownFixture builds an Onboarder over fakes for a project in the given
 // status.
+//
+// Refs are set to match the status, because ordering is derived from which refs
+// remain: a "decommissioning" project has already had its credential revoked,
+// so leaving CredentialID populated would describe a state that cannot occur.
 func newTeardownFixture(status string) (*Onboarder, *tdFakes) {
-	reg := &tdRegistry{rec: registry.ProjectRecord{
+	rec := registry.ProjectRecord{
 		ProjectID:    "proj-11",
 		BucketName:   "silo-proj-11",
 		CredentialID: "cred-ref",
 		KeyID:        "projects/proj-11",
 		Status:       status,
-	}}
+	}
+	switch status {
+	case registry.StatusDecommissioning:
+		rec.CredentialID = "" // step 1 done; revoke-key is next
+	case registry.StatusDecommissioned:
+		rec.CredentialID, rec.KeyID, rec.BucketName = "", "", ""
+	}
+	reg := &tdRegistry{rec: rec}
 	f := &tdFakes{reg: reg, kms: &tdKMS{}, be: &tdBackend{}, creds: &tdCreds{}}
 	o := &Onboarder{Registry: reg, KMS: f.kms, Backend: f.be, Creds: f.creds}
 	return o, f
@@ -157,6 +177,112 @@ func TestTeardown_RejectsAlreadyDecommissioned(t *testing.T) {
 	}
 	if len(f.be.deleted) != 0 {
 		t.Error("a decommissioned project's bucket must not be deleted again")
+	}
+}
+
+// TestTeardown_DeregisterRequiresBucketDeleted is the regression test for the
+// orphaned-bucket bug.
+//
+// Status has three values for four steps, so steps 2-4 all sat in
+// "decommissioning" and were indistinguishable. deregister therefore ran while
+// the bucket was still live, deleting the registry record that named it — and
+// since delete-bucket loads that record to find the bucket, the data became
+// unreachable through siloctl entirely. Unrecoverable, not merely out of order.
+func TestTeardown_DeregisterRequiresBucketDeleted(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning) // key + bucket still live
+
+	err := o.Teardown(ctx, "proj-11", StepDeregister)
+	if !errors.Is(err, ErrOutOfOrder) {
+		t.Fatalf("deregister with a live bucket must be refused, got %v", err)
+	}
+	if f.reg.deregister != 0 {
+		t.Fatal("the registry record was deleted while the bucket was still live — the bucket is now orphaned")
+	}
+
+	// The record must still name the bucket, so teardown can be resumed.
+	if f.reg.rec.BucketName == "" {
+		t.Fatal("bucket name lost from the record; teardown could no longer find the bucket")
+	}
+}
+
+// TestTeardown_StepsAreNotReplayable: every step is refused once its own work is
+// done, so a repeated invocation can't double-revoke or re-delete.
+func TestTeardown_StepsAreNotReplayable(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusActive)
+
+	for _, step := range TeardownOrder {
+		if err := o.Teardown(ctx, "proj-11", step); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		if err := o.Teardown(ctx, "proj-11", step); !errors.Is(err, ErrOutOfOrder) {
+			t.Errorf("re-running %q should be refused, got %v", step, err)
+		}
+	}
+
+	if len(f.creds.revoked) != 1 || len(f.kms.revoked) != 1 || len(f.be.deleted) != 1 || f.reg.deregister != 1 {
+		t.Errorf("each layer must be touched exactly once: creds=%d kms=%d buckets=%d deregister=%d",
+			len(f.creds.revoked), len(f.kms.revoked), len(f.be.deleted), f.reg.deregister)
+	}
+}
+
+// TestTeardown_FailedStepStaysPending: when a layer fails, its ref must survive
+// so the step is retried rather than silently skipped.
+func TestTeardown_FailedStepStaysPending(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning)
+	f.kms.err = errors.New("vault unreachable")
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeKey); err == nil {
+		t.Fatal("a failing key revoke must surface")
+	}
+	if f.reg.rec.KeyID == "" {
+		t.Fatal("key ref cleared despite the revoke failing — the step would be skipped")
+	}
+
+	// Still due, and the next step is still blocked.
+	if got := nextStep(f.reg.rec); got != StepRevokeKey {
+		t.Errorf("want revoke-key still pending, got %q", got)
+	}
+	if err := o.Teardown(ctx, "proj-11", StepDeleteBucket); !errors.Is(err, ErrOutOfOrder) {
+		t.Errorf("delete-bucket must stay blocked after a failed revoke, got %v", err)
+	}
+
+	// Retry succeeds once the layer recovers.
+	f.kms.err = nil
+	if err := o.Teardown(ctx, "proj-11", StepRevokeKey); err != nil {
+		t.Fatalf("retry after recovery: %v", err)
+	}
+}
+
+// TestNextStep_ReportsTruePosition: the CLI prints "next" from this, so it must
+// reflect real state rather than which step was last invoked.
+func TestNextStep_ReportsTruePosition(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusActive)
+
+	for _, want := range TeardownOrder {
+		got, err := NextStep(ctx, f.reg, "proj-11")
+		if err != nil {
+			t.Fatalf("NextStep: %v", err)
+		}
+		if got != want {
+			t.Fatalf("want next=%q, got %q", want, got)
+		}
+		if err := o.Teardown(ctx, "proj-11", want); err != nil {
+			t.Fatalf("%s: %v", want, err)
+		}
+	}
+
+	// A deregistered project is gone from the registry: complete, not an error.
+	f.reg.getErr = registry.ErrNotFound
+	got, err := NextStep(ctx, f.reg, "proj-11")
+	if err != nil {
+		t.Fatalf("a missing record means fully torn down, got error %v", err)
+	}
+	if got != "" {
+		t.Errorf("want no pending step, got %q", got)
 	}
 }
 

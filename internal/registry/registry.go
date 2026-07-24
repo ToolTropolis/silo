@@ -30,6 +30,11 @@ type TenantRegistry interface {
 	// UpdateRefs sets the KMS keyID and credentialID on a project's record,
 	// once those resources have been provisioned during onboarding.
 	UpdateRefs(ctx context.Context, projectID, keyID, credentialID string) error
+	// ClearBucket blanks BucketName after the bucket has actually been deleted,
+	// marking that teardown step done. Teardown derives its progress from which
+	// refs remain, so the cleared field is what stops deregister from running
+	// while the bucket is still live and stranding it.
+	ClearBucket(ctx context.Context, projectID string) error
 	Deregister(ctx context.Context, projectID string) error // final step of teardown
 }
 

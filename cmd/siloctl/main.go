@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/tooltropolis/silo/internal/admin"
 	"github.com/tooltropolis/silo/internal/backend"
@@ -33,6 +34,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "siloctl teardown:", err)
 			os.Exit(1)
 		}
+	case "status":
+		if err := runStatus(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "siloctl status:", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -47,6 +53,7 @@ func usage() {
 
 Usage:
   siloctl onboard --project=<id> [flags]   provision a project (registry + key + bucket + credential)
+  siloctl status [--rqlite=<addrs>]        list projects and any pending teardown step
   siloctl teardown --project=<id> --step=<step>   decommission one layer (confirmed)
 
 Teardown is deliberately manual: one confirmed step per invocation, in order.
@@ -55,7 +62,8 @@ Teardown is deliberately manual: one confirmed step per invocation, in order.
   3. --step=delete-bucket       DELETE the bucket and every memory version (irreversible)
   4. --step=deregister          remove the registry record
 
-There is no flag that runs all four.
+There is no flag that runs all four. Steps are enforced in order against the
+registry, so a step cannot run early or twice; "siloctl status" shows what is due.
 
 Run "siloctl onboard -h" for onboarding flags.`)
 }
@@ -137,6 +145,54 @@ func runOnboard(args []string) error {
 	return nil
 }
 
+// runStatus lists projects and, for any mid-teardown, what step is due next.
+//
+// Without this, inspecting teardown state meant hand-writing rqlite queries —
+// exactly when you least want to improvise, since a stalled teardown may have
+// left a live bucket behind.
+func runStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	reg, err := registry.NewRqlite(ctx, splitCSV(*rqliteAddrs))
+	if err != nil {
+		return fmt.Errorf("connect registry: %w", err)
+	}
+	defer reg.Close()
+
+	recs, err := reg.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
+	}
+	if len(recs) == 0 {
+		fmt.Println("No projects registered.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "PROJECT\tSTATUS\tBUCKET\tNEXT TEARDOWN STEP")
+	for _, rec := range recs {
+		bucket := rec.BucketName
+		if bucket == "" {
+			bucket = "-"
+		}
+		next, err := admin.NextStep(ctx, reg, rec.ProjectID)
+		if err != nil {
+			next = "?"
+		}
+		pending := string(next)
+		if pending == "" {
+			pending = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", rec.ProjectID, rec.Status, bucket, pending)
+	}
+	return w.Flush()
+}
+
 // runTeardown performs ONE confirmed teardown layer.
 //
 // There is deliberately no flag that runs every step: teardown is manual and
@@ -180,10 +236,6 @@ func runTeardown(args []string) error {
 			"SILO_S3_ACCESS_KEY/SILO_S3_SECRET_KEY)")
 	}
 
-	if err := confirmStep(os.Stdin, os.Stdout, *project, step, *assumeYes); err != nil {
-		return err
-	}
-
 	ctx := context.Background()
 
 	reg, err := registry.NewRqlite(ctx, splitCSV(*rqliteAddrs))
@@ -191,6 +243,22 @@ func runTeardown(args []string) error {
 		return fmt.Errorf("connect registry: %w", err)
 	}
 	defer reg.Close()
+
+	// Check ordering BEFORE prompting. Teardown itself re-checks — that's the
+	// real guard — but asking someone to type a project ID to authorize an
+	// irreversible delete, then refusing the step anyway, trains them to type it
+	// reflexively. Refuse first, prompt only for a step that will actually run.
+	if due, err := admin.NextStep(ctx, reg, *project); err == nil && due != step {
+		if due == "" {
+			return fmt.Errorf("project %q is already fully decommissioned", *project)
+		}
+		return fmt.Errorf("project %q is not ready for %q; next step is %q\n"+
+			"  run: siloctl teardown --project=%s --step=%s", *project, step, due, *project, due)
+	}
+
+	if err := confirmStep(os.Stdin, os.Stdout, *project, step, *assumeYes); err != nil {
+		return err
+	}
 
 	km, err := kms.NewVault(ctx, kms.Config{Address: *vaultAddr, Token: *vaultToken})
 	if err != nil {
@@ -219,7 +287,17 @@ func runTeardown(args []string) error {
 	}
 
 	fmt.Printf("teardown step %q completed for project %q.\n", step, *project)
-	if next := nextStep(step); next != "" {
+
+	// Ask the registry what's actually left rather than assuming the next step
+	// positionally. "Fully decommissioned" must mean the record is gone, not
+	// merely that the last-named step happened to run.
+	next, err := admin.NextStep(ctx, reg, *project)
+	if err != nil {
+		// The work succeeded; only the follow-up hint is unavailable.
+		fmt.Printf("(could not determine the next step: %v)\n", err)
+		return nil
+	}
+	if next != "" {
 		fmt.Printf("Next: siloctl teardown --project=%s --step=%s\n", *project, next)
 	} else {
 		fmt.Printf("Project %q is fully decommissioned.\n", *project)
@@ -271,16 +349,6 @@ func readLine(in io.Reader) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
-}
-
-// nextStep returns the step that follows, or "" after the last one.
-func nextStep(step admin.TeardownStep) admin.TeardownStep {
-	for i, s := range admin.TeardownOrder {
-		if s == step && i+1 < len(admin.TeardownOrder) {
-			return admin.TeardownOrder[i+1]
-		}
-	}
-	return ""
 }
 
 func splitCSV(s string) []string {

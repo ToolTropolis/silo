@@ -42,6 +42,7 @@ func (f *fakeRegistry) Deregister(context.Context, string) error {
 	f.deregistered = true
 	return nil
 }
+func (f *fakeRegistry) ClearBucket(context.Context, string) error { return nil }
 
 type fakeKMS struct {
 	created    bool
