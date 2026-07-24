@@ -21,6 +21,7 @@ PORT="${SILO_DEMO_PORT:-8500}"
 DASH_PORT="${SILO_DEMO_DASHBOARD_PORT:-8600}"
 API="http://127.0.0.1:${PORT}"
 COMPOSE="deploy/docker-compose.yaml"
+INSTALL_URL="https://raw.githubusercontent.com/ToolTropolis/silo/main/docs/install.sh"
 RUN_DIR=".silo-demo"
 NOTE='Prefers tabs. Always run gofmt before committing.'
 
@@ -96,10 +97,36 @@ note "Vault seals on restart, so this runs every time. It is idempotent."
 run "deploy/bootstrap-dev.sh >/dev/null 2>&1"
 note "vault unsealed; silo-admin and silo-runtime provisioned"
 
-step "3/6  Building the binaries"
-run "go build -o ./bin/siloctl ./cmd/siloctl"
-run "go build -o ./bin/silod ./cmd/silod"
-run "go build -o ./bin/silo-dashboard ./cmd/silo-dashboard"
+# Build from source when there's a toolchain and sources present; otherwise fall
+# back to the released binaries. That second path is what makes the demo work
+# from a bare download of these three scripts, with no clone and no Go.
+if command -v go >/dev/null 2>&1 && [ -d ./cmd/siloctl ]; then
+  step "3/6  Building the binaries"
+  run "go build -o ./bin/siloctl ./cmd/siloctl"
+  run "go build -o ./bin/silod ./cmd/silod"
+  run "go build -o ./bin/silo-dashboard ./cmd/silo-dashboard"
+else
+  step "3/6  Fetching the released binaries"
+  if [ -d ./cmd/siloctl ]; then
+    note "no Go toolchain found — using the published release instead"
+  else
+    note "no sources here — using the published release"
+  fi
+  mkdir -p ./bin
+  # The installer verifies checksums (and the cosign signature when available),
+  # so this path is no less trustworthy than building from source.
+  # INSTALL_DIR and BIN_DIR must differ: the installer symlinks from the latter
+  # to the former, and pointing both at ./bin makes every binary a link to
+  # itself ("Too many levels of symbolic links").
+  printf '    \033[2m$ curl -fsSL .../docs/install.sh | SILO_INSTALL_DIR=./bin sh\033[0m\n'
+  if ! curl -fsSL "${INSTALL_URL}" |
+       SILO_INSTALL_DIR="$PWD/${RUN_DIR}/dist" SILO_BIN_DIR="$PWD/bin" sh >/dev/null 2>&1; then
+    echo "ERROR: could not fetch the released binaries." >&2
+    echo "       Install Go and re-run, or see docs/installing.md" >&2
+    exit 1
+  fi
+  note "4 binaries in ./bin"
+fi
 
 step "4/6  Creating project \"${PROJECT}\""
 note "its own bucket, its own encryption key, its own scoped credential"
