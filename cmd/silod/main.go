@@ -12,6 +12,7 @@ import (
 	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/cache"
 	"github.com/tooltropolis/silo/internal/daemon"
+	"github.com/tooltropolis/silo/internal/devstack"
 )
 
 func main() {
@@ -32,6 +33,19 @@ func run(args []string) error {
 	tokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs the SDK authenticates with (or SILO_TOKENS)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// On the local dev stack, fall back to the runtime identity that
+	// bootstrap-dev.sh provisions — object CRUD only, no bucket lifecycle.
+	// Gated on a loopback endpoint so a released binary never carries a
+	// built-in credential; see internal/devstack.
+	if devstack.IsLocal(*backendEndpoint) {
+		if *accessKey == "" {
+			*accessKey = devstack.RuntimeKey
+		}
+		if *secretKey == "" {
+			*secretKey = devstack.RuntimeSecret
+		}
 	}
 
 	if *tokens == "" {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/tooltropolis/silo/internal/admin"
 	"github.com/tooltropolis/silo/internal/backend"
+	"github.com/tooltropolis/silo/internal/devstack"
 	"github.com/tooltropolis/silo/internal/kms"
 	"github.com/tooltropolis/silo/internal/registry"
 )
@@ -87,6 +88,9 @@ func runOnboard(args []string) error {
 	if *project == "" {
 		return fmt.Errorf("--project is required")
 	}
+	applyDevDefaults(*backendEndpoint, *rqliteAddrs, *vaultAddr,
+		vaultToken, s3AccessKey, s3SecretKey, weedBinary)
+
 	if *vaultToken == "" {
 		return fmt.Errorf("Vault token required (--vault-token or VAULT_TOKEN)")
 	}
@@ -228,6 +232,9 @@ func runTeardown(args []string) error {
 	if err != nil {
 		return err
 	}
+	applyDevDefaults(*backendEndpoint, *rqliteAddrs, *vaultAddr,
+		vaultToken, s3AccessKey, s3SecretKey, weedBinary)
+
 	if *vaultToken == "" {
 		return fmt.Errorf("Vault token required (--vault-token or VAULT_TOKEN)")
 	}
@@ -349,6 +356,37 @@ func readLine(in io.Reader) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
+}
+
+// applyDevDefaults fills unset credentials with the local dev-stack values, but
+// only when every endpoint is loopback.
+//
+// The gate is the point. Defaulting a Vault token unconditionally would put
+// "dev-only-token" in a released binary, where it is convenient enough that
+// nobody notices it authenticating against something real. Talking to a
+// non-local endpoint therefore still requires stating credentials explicitly.
+//
+// Only empty values are filled, so an explicit flag always wins.
+func applyDevDefaults(backendEndpoint, rqliteAddrs, vaultAddr string,
+	vaultToken, s3AccessKey, s3SecretKey, weedBinary *string) {
+
+	if !devstack.IsLocal(backendEndpoint, rqliteAddrs, vaultAddr) {
+		return
+	}
+	if *vaultToken == "" {
+		*vaultToken = devstack.VaultToken
+	}
+	if *s3AccessKey == "" {
+		*s3AccessKey = devstack.AdminKey
+	}
+	if *s3SecretKey == "" {
+		*s3SecretKey = devstack.AdminSecret
+	}
+	// "weed" is the flag's own default and only resolves inside the container,
+	// so on the dev stack it is never the right value.
+	if *weedBinary == "" || *weedBinary == "weed" {
+		*weedBinary = devstack.WeedBinary
+	}
 }
 
 func splitCSV(s string) []string {

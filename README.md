@@ -56,8 +56,13 @@ docs/         architecture.md
 
 ## Quickstart
 
-New here? [**docs/QUICKSTART.md**](docs/QUICKSTART.md) takes you from clone to
-storing and reading a piece of agent memory in about five minutes.
+```bash
+deploy/demo.sh
+```
+
+Starts the stack, creates an isolated project, runs the daemon, and writes and
+reads back a memory file — printing every command as it goes. See
+[**docs/QUICKSTART.md**](docs/QUICKSTART.md) for the same thing by hand.
 
 ## Requirements
 

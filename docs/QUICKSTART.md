@@ -22,6 +22,28 @@ a memory file you wrote and read back through the API.
 
 ---
 
+## The fast path
+
+```bash
+git clone https://github.com/ToolTropolis/silo.git
+cd silo
+
+deploy/demo.sh
+```
+
+That starts the stack, bootstraps Vault, creates an isolated project, runs the
+daemon, then **writes and reads back a memory file** — printing every command it
+runs, so nothing is hidden. About a minute, most of it Docker.
+
+At the end you get a dashboard URL where that file already has two versions.
+Tear it down with `deploy/demo.sh --down`.
+
+**Prefer to type it yourself?** The rest of this page is the same sequence by
+hand — worth doing once, since it's what you'd actually run against a real
+deployment.
+
+---
+
 ## 1. Start the stack (~1 min)
 
 ```bash
@@ -59,21 +81,19 @@ Each project gets its own bucket, its own encryption key, and its own credential
 scoped to that bucket alone. That isolation is the whole point of Silo.
 
 ```bash
-export SILO_S3_ACCESS_KEY=SILOADMIN
-export SILO_S3_SECRET_KEY=SILOADMINSECRET
-
 go build -o ./bin/siloctl ./cmd/siloctl
 
-./bin/siloctl onboard --project=quickstart \
-  --vault-token=dev-only-token \
-  --weed-binary=./deploy/weed-docker.sh
+./bin/siloctl onboard --project=quickstart
 ```
 
 Expect: `onboarded project "quickstart": bucket, per-project key, registry record, and credential provisioned.`
 
-> **Why `--weed-binary`:** issuing the scoped credential shells out to `weed`,
-> which lives *inside* the SeaweedFS container. That wrapper runs it there.
-> Without it you'll see `executable file not found in $PATH`.
+> **Where did the credentials go?** When every endpoint is loopback, `siloctl`
+> fills in the dev stack's throwaway Vault token, S3 keys, and the
+> `deploy/weed-docker.sh` wrapper (issuing a scoped credential shells out to
+> `weed`, which lives *inside* the container). Point any endpoint at a
+> non-local host and those defaults switch off — a real deployment always
+> states its own credentials.
 
 ## 4. Run the daemon
 
@@ -82,9 +102,6 @@ the lower-privilege `silo-runtime` identity — it cannot create or delete bucke
 
 ```bash
 go build -o ./bin/silod ./cmd/silod
-
-export SILO_RUNTIME_ACCESS_KEY=SILORUNTIME
-export SILO_RUNTIME_SECRET_KEY=SILORUNTIMESECRET
 
 ./bin/silod --listen 127.0.0.1:8500 --tokens "demo-token=quickstart"
 ```
@@ -163,8 +180,7 @@ Remove the quickstart project (four confirmed steps — teardown is deliberately
 manual and destructive):
 
 ```bash
-./bin/siloctl teardown --project=quickstart --step=revoke-credential \
-  --vault-token=dev-only-token --weed-binary=./deploy/weed-docker.sh
+./bin/siloctl teardown --project=quickstart --step=revoke-credential
 # ...then --step=revoke-key, --step=delete-bucket, --step=deregister
 ```
 
@@ -200,8 +216,8 @@ docker compose -f deploy/docker-compose.yaml down -v  # wipe everything
 |---|---|
 | `address already in use` | Another `silod` owns that port. Find it with `lsof -nP -iTCP:8500 -sTCP:LISTEN`, then `pkill -f silod` — or pick a different `--listen` port. |
 | `Vault is sealed` | Re-run `deploy/bootstrap-dev.sh` |
-| `create bucket: 403 AccessDenied` | `SILO_S3_*` not exported, or bootstrap not run |
-| `exec "weed": not found` | Missing `--weed-binary=./deploy/weed-docker.sh` |
+| `create bucket: 403 AccessDenied` | Bootstrap not run — or a non-local endpoint, which disables the dev credential defaults |
+| `exec "weed": not found` | A non-loopback endpoint turns the dev defaults off. Pass `--weed-binary=./deploy/weed-docker.sh` explicitly. |
 | `leader not found` | rqlite still forming — wait ~15 s |
 | Daemon returns `unauthorized` | Token isn't in `--tokens` |
 | Daemon returns `not found` for a path you wrote | Wrong project's token — tokens are scoped to one project |

@@ -16,13 +16,18 @@ import (
 // credentials, so every `siloctl onboard` failed with an opaque 403 from deep in
 // the call. This asserts the flags exist and that a missing credential fails
 // fast with an actionable message instead.
-func TestOnboard_RequiresS3Credentials(t *testing.T) {
+// TestOnboard_RequiresS3CredentialsRemotely: against a non-local backend,
+// missing credentials must still fail fast rather than attempt an anonymous
+// request. The dev-stack defaults deliberately do not apply here — that gate is
+// what keeps a throwaway credential from reaching a real deployment.
+func TestOnboard_RequiresS3CredentialsRemotely(t *testing.T) {
 	t.Setenv("SILO_S3_ACCESS_KEY", "")
 	t.Setenv("SILO_S3_SECRET_KEY", "")
 
 	err := runOnboard([]string{
 		"--project=p1",
-		"--vault-token=dev-only-token",
+		"--vault-token=some-real-token",
+		"--backend-endpoint=https://s3.example.com",
 	})
 	if err == nil {
 		t.Fatal("onboard without S3 credentials should fail fast, not attempt an anonymous request")
@@ -32,6 +37,25 @@ func TestOnboard_RequiresS3Credentials(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error should mention %q so the operator knows the fix; got: %s", want, msg)
 		}
+	}
+}
+
+// TestOnboard_RemoteVaultRejectsDevToken is the credential-leak guard: pointing
+// at a remote Vault must not silently inherit "dev-only-token".
+func TestOnboard_RemoteVaultRejectsDevToken(t *testing.T) {
+	t.Setenv("SILO_S3_ACCESS_KEY", "")
+	t.Setenv("SILO_S3_SECRET_KEY", "")
+	t.Setenv("VAULT_TOKEN", "")
+
+	err := runOnboard([]string{
+		"--project=p1",
+		"--vault=https://vault.example.com:8200",
+	})
+	if err == nil {
+		t.Fatal("a remote Vault with no token must fail, not fall back to the dev token")
+	}
+	if !strings.Contains(err.Error(), "Vault token required") {
+		t.Errorf("want a missing-token error, got: %s", err)
 	}
 }
 
