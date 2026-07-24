@@ -45,6 +45,9 @@ Data persists across `docker compose down`. Use `down -v` for a clean slate.
 ## 2. Onboard the project
 
 ```bash
+# Admin credentials — needed ONLY for onboarding/teardown, which create and
+# delete buckets. The runtime binaries use the lower-privilege silo-runtime
+# identity instead (see step 3).
 export SILO_S3_ACCESS_KEY=SILOADMIN
 export SILO_S3_SECRET_KEY=SILOADMINSECRET
 
@@ -83,8 +86,14 @@ curl -s -G "http://localhost:4001/db/query" \
 
 ## 3. Run the daemon
 
+The daemon needs only object-level access, so run it as `silo-runtime` — it is
+denied bucket creation/deletion by SeaweedFS:
+
 ```bash
 go build -o ./bin/silod ./cmd/silod
+
+export SILO_RUNTIME_ACCESS_KEY=SILORUNTIME
+export SILO_RUNTIME_SECRET_KEY=SILORUNTIMESECRET
 
 ./bin/silod \
   --listen 127.0.0.1:8500 \

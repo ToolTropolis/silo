@@ -27,8 +27,8 @@ func run(args []string) error {
 	cacheDir := fs.String("cache-dir", "./data/cache", "directory for per-project bbolt cache files")
 	backendEndpoint := fs.String("backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
 	backendRegion := fs.String("backend-region", "us-east-1", "S3 region (SeaweedFS ignores it)")
-	accessKey := fs.String("s3-access-key", os.Getenv("SILO_S3_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY)")
-	secretKey := fs.String("s3-secret-key", os.Getenv("SILO_S3_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY)")
+	accessKey := fs.String("s3-access-key", backend.RuntimeEnv("SILO_S3_ACCESS_KEY", "SILO_RUNTIME_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY / SILO_RUNTIME_ACCESS_KEY)")
+	secretKey := fs.String("s3-secret-key", backend.RuntimeEnv("SILO_S3_SECRET_KEY", "SILO_RUNTIME_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY / SILO_RUNTIME_SECRET_KEY)")
 	tokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs the SDK authenticates with (or SILO_TOKENS)")
 	if err := fs.Parse(args); err != nil {
 		return err

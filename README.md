@@ -95,8 +95,12 @@ from environment variables or a secrets manager, never a checked-in file.
 > issues each project a SeaweedFS identity scoped Read/Write to *only* its own
 > bucket, so one project's credential is denied (403) on another's bucket. A
 > consequence is that **once any identity exists, SeaweedFS disables anonymous
-> access cluster-wide** — so Silo's own components authenticate as the
-> `silo-admin` identity (`deploy/bootstrap-dev.sh`). The isolation guarantee is
+> access cluster-wide** — so Silo's own components authenticate. Two identities
+> are provisioned, least privilege: **`silo-admin`** (bucket lifecycle, used
+> *only* by `siloctl onboard`/`teardown`) and **`silo-runtime`** (object CRUD
+> only, used by `silod`/`silo-dashboard`/`silo-distil`). SeaweedFS denies
+> `silo-runtime` bucket creation and deletion, so a compromised daemon or
+> dashboard cannot destroy a project's bucket. The isolation guarantee is
 > covered by an integration test that drives one project's credential against
 > another's bucket and asserts it's refused.
 
