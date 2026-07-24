@@ -77,13 +77,10 @@ installed, a bad signature is fatal** — it will not install.
 ```bash
 VERSION=v0.1.0
 BASE="https://github.com/ToolTropolis/silo/releases/download/${VERSION}"
-curl -fsSLO "${BASE}/SHA256SUMS.txt" \
-     -O "${BASE}/SHA256SUMS.txt.sig" \
-     -O "${BASE}/SHA256SUMS.txt.pem"
+curl -fsSLO "${BASE}/SHA256SUMS.txt" -O "${BASE}/SHA256SUMS.txt.bundle"
 
 cosign verify-blob \
-  --signature SHA256SUMS.txt.sig \
-  --certificate SHA256SUMS.txt.pem \
+  --bundle SHA256SUMS.txt.bundle \
   --certificate-identity-regexp '^https://github.com/ToolTropolis/silo/\.github/workflows/release\.yaml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS.txt
@@ -91,6 +88,10 @@ cosign verify-blob \
 # then check a downloaded binary against the verified manifest
 sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
+
+> Signatures ship as a **Sigstore bundle** (`.bundle`) — certificate and Rekor
+> inclusion proof in one file. cosign v3 no longer emits the older detached
+> `.sig`/`.pem` pair, so older snippets using those flags won't apply here.
 
 ---
 
