@@ -18,6 +18,7 @@ import (
 	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/cache"
 	"github.com/tooltropolis/silo/internal/daemon"
+	"github.com/tooltropolis/silo/internal/devstack"
 	"github.com/tooltropolis/silo/internal/distilator"
 	"github.com/tooltropolis/silo/internal/registry"
 	"github.com/tooltropolis/silo/web/dashboard"
@@ -41,6 +42,21 @@ func run(args []string) error {
 	cacheDir := fs.String("cache-dir", "./data/dashboard-cache", "bbolt cache directory (used by the promote path)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// On the local dev stack, fall back to the runtime identity that
+	// bootstrap-dev.sh provisions. Without credentials the dashboard reads
+	// anonymously, which SeaweedFS refuses once any identity exists — the whole
+	// registry page renders, then every memory view fails with 403, which reads
+	// as a dashboard bug rather than a missing credential. Gated on a loopback
+	// endpoint so a released binary never carries a built-in credential.
+	if devstack.IsLocal(*backendEndpoint) {
+		if *accessKey == "" {
+			*accessKey = devstack.RuntimeKey
+		}
+		if *secretKey == "" {
+			*secretKey = devstack.RuntimeSecret
+		}
 	}
 
 	ctx := context.Background()
