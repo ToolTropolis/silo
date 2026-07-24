@@ -1,0 +1,206 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="system-arch" id="silo-system-arch">
+    <mxGraphModel dx="1400" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1720" pageHeight="1180" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ================= Shared backing services column (right) ================= -->
+        <mxCell id="svc_col" value="Shared backing services" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#ebf3fb;strokeColor=#6c8ebf;dashed=1;fontSize=13;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="40" width="380" height="1100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="registry" value="internal/registry&#10;TenantRegistry + Locker&#10;rqlite (3-node, Raft HA)&#10;project to bucket+key map" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="90" width="300" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="kms" value="internal/kms&#10;KeyManager&#10;Vault&#10;per-project SSE keys" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="210" width="300" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="seaweedfs" value="internal/backend&#10;DurableBackend&#10;SeaweedFS (S3-compatible)&#10;bucket-per-project (silo-&lt;id&gt;)&#10;versioned, ETag CAS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="330" width="300" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="isolation_note" value="Isolation: bucket-per-project + per-project scoped&#10;S3 credential + per-project SSE key. One project's&#10;credential cannot reach another project's bucket." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="460" width="300" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="distilations" value="Proposals output&#10;_distilations/&lt;run-id&gt;/&#10;(separate namespace,&#10;live store untouched)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="580" width="300" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="distil_invariant" value="Core invariant: input store is never modified by&#10;a run; proposals only reach memory via&#10;human-approved promotion." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=6;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="690" width="300" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- ================= ZONE 1: Runtime read/write path ================= -->
+        <mxCell id="zone1" value="Zone 1 — Runtime read/write path" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1220" height="330" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="agents" value="Agents&#10;(5-10 per project)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="80" y="150" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="client_sdk" value="pkg/client&#10;agent-facing SDK&#10;(Read / Write / List / Search)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="150" width="220" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="silod" value="silod (daemon)&#10;internal/daemon&#10;SafeWrite CAS path&#10;leader lock + SyncProject" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="640" y="130" width="240" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cache" value="internal/cache&#10;LocalCache (bbolt)&#10;content bucket + FIFO&#10;offline write queue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="640" y="260" width="240" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- edges zone 1 -->
+        <mxCell id="e_a_client" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="agents" target="client_sdk">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_client_daemon" value="HTTP /v1/read|write|list|search&#10;(bearer token, scoped to 1 project)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="client_sdk" target="silod">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_daemon_cache" value="local read / queue on outage" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="silod" target="cache">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_daemon_registry" value="lookup bucket+key, leader lock" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="silod" target="registry">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_daemon_kms" value="fetch SSE key" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.55;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="silod" target="kms">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_daemon_seaweed" value="SafeWrite (ETag CAS) / Read/List/Search" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;exitX=1;exitY=0.95;exitDx=0;exitDy=0;entryX=0;entryY=0.2;entryDx=0;entryDy=0;" edge="1" parent="1" source="silod" target="seaweedfs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1100" y="270"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cache_seaweed" value="SyncProject drains queue on recovery" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.85;entryDx=0;entryDy=0;" edge="1" parent="1" source="cache" target="seaweedfs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1120" y="340"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ================= ZONE 2: Async Distilator pipeline ================= -->
+        <mxCell id="zone2" value="Zone 2 — Async Distilator pipeline" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="400" width="1220" height="330" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sessions" value="Captured transcripts&#10;internal/transcript&#10;_sessions/ in SeaweedFS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="80" y="530" width="210" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="silo_distil" value="silo-distil (cmd)&#10;internal/distilator&#10;orchestrator +&#10;Claude-backed DistilatorProvider" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="380" y="520" width="240" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="reviewer" value="Reviewer / promote gate&#10;internal/distilator&#10;human approval required" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="720" y="530" width="240" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- edges zone 2 -->
+        <mxCell id="e_seaweed_sessions" value="reads sessions + live store" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=0;exitY=0.9;exitDx=0;exitDy=0;entryX=1;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="seaweedfs" target="sessions">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1265" y="460"/>
+              <mxPoint x="1265" y="415"/>
+              <mxPoint x="330" y="415"/>
+              <mxPoint x="330" y="555"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_sessions_distil" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="sessions" target="silo_distil">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_distil_out" value="writes proposals" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="silo_distil" target="distilations">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1000" y="570"/>
+              <mxPoint x="1000" y="625"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_out_review" value="silo-distil show" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="distilations" target="reviewer">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_review_daemon" value="promote (SafeWrite, tagged promoted_from:&lt;run-id&gt;)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;exitX=0.15;exitY=0;exitDx=0;exitDy=0;entryX=1;entryY=1;entryDx=0;entryDy=0;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="reviewer" target="silod">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="756" y="480"/>
+              <mxPoint x="1030" y="480"/>
+              <mxPoint x="1030" y="215"/>
+            </Array>
+          </mxGeometry>
+          <mxPoint x="0" y="60" as="offset"/>
+        </mxCell>
+
+        <!-- ================= ZONE 3: Ops / admin ================= -->
+        <mxCell id="zone3" value="Zone 3 — Ops / admin" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="760" width="1220" height="380" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="siloctl_onboard" value="siloctl onboard (cmd)&#10;internal/admin&#10;registry record -&gt; SSE key -&gt;&#10;versioned bucket -&gt; scoped cred&#10;(atomic, rollback on failure)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="840" width="250" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="silo_dashboard" value="silo-dashboard (cmd)&#10;web/dashboard&#10;registry view (read-only) +&#10;memory version browser +&#10;Distilator review (promote)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="450" y="840" width="260" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="siloctl_teardown" value="siloctl teardown (cmd)&#10;internal/admin&#10;manual, per-layer, confirmed:&#10;revoke-credential -&gt; revoke-key&#10;-&gt; delete-bucket -&gt; deregister" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1020" width="250" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- edges zone 3 -->
+        <mxCell id="e_onboard_registry" value="1. create record  2. issue SSE key  3. create versioned bucket + scoped cred" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.6;entryDx=0;entryDy=0;align=right;" edge="1" parent="1" source="siloctl_onboard" target="registry">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1260" y="870"/>
+              <mxPoint x="1260" y="125"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_dash_registry" value="list projects, browse versions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.15;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;align=right;" edge="1" parent="1" source="silo_dashboard" target="registry">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1280" y="860"/>
+              <mxPoint x="1280" y="152"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_dash_distil" value="review proposals" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="silo_dashboard" target="distilations">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1000" y="905"/>
+              <mxPoint x="1000" y="625"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_dash_promote" value="promote (one write action, via SafeWrite)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;exitX=0.4;exitY=0;exitDx=0;exitDy=0;entryX=0.45;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="silo_dashboard" target="silod">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="554" y="700"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_onboard_teardown" value="onboard, then later" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;dashed=1;" edge="1" parent="1" source="siloctl_onboard" target="siloctl_teardown">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_teardown_registry" value="4. revoke cred / revoke key /&#10;delete bucket / deregister" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;strokeColor=#b85450;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.9;entryDx=0;entryDy=0;" edge="1" parent="1" source="siloctl_teardown" target="registry">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1300" y="1050"/>
+              <mxPoint x="1300" y="175"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
