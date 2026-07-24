@@ -1,7 +1,7 @@
 # Quickstart
 
-From a fresh clone to storing and reading a piece of agent memory. Should take
-about five minutes, most of it waiting for Docker.
+From a fresh clone to storing and reading a piece of agent memory — either in
+one command, or step by step.
 
 **What you'll have at the end:** a running Silo stack, one isolated project, and
 a memory file you wrote and read back through the API.
@@ -38,18 +38,20 @@ runs, so nothing is hidden. About a minute, most of it Docker.
 At the end you get a dashboard URL where that file already has two versions.
 Tear it down with `deploy/demo.sh --down`.
 
-**Prefer to type it yourself?** The rest of this page is the same sequence by
-hand — worth doing once, since it's what you'd actually run against a real
-deployment.
-
 ---
+
+## The manual path
+
+**Prefer to type it yourself?** The rest of this page is the same sequence by
+hand — six steps, two terminals, ~5 minutes. Worth doing once: it's what you'd
+actually run against a real deployment, where none of the dev-stack defaults
+apply.
+
+Assumes you've already cloned the repo and are in it.
 
 ## 1. Start the stack (~1 min)
 
 ```bash
-git clone https://github.com/ToolTropolis/silo.git
-cd silo
-
 docker compose -f deploy/docker-compose.yaml up -d
 ```
 
