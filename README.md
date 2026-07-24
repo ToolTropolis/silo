@@ -13,11 +13,11 @@ The two names tell one story:
   Silo. It reads a project's own sessions and its own memory store and refines
   them, never touching another project's data because it never has access to it.
 
-> **Status: v1 in progress.** This repository is scaffolded to its target
-> architecture — every package and interface from the spec is in place, with the
-> implementation being filled in per the build sequence in
-> [`docs/architecture.md`](docs/architecture.md). Package bodies currently return
-> a not-implemented sentinel; the module builds, vets, and tests green.
+> **Status: v1 complete.** All seven build-sequence steps are implemented and
+> verified against a live stack, and the v1 definition-of-done checklist
+> (spec §10) passes 14/14 — including leader-failover, a real backend outage
+> with no data loss, and a proven cross-project isolation boundary. See
+> [`docs/architecture.md`](docs/architecture.md).
 
 ## Architecture at a glance
 
@@ -45,7 +45,7 @@ Three zones (full diagram and narrative in
 ## Repository layout
 
 ```
-cmd/          silod (daemon), siloctl (admin CLI), silo-distil (Distilator runner)
+cmd/          silod (daemon), siloctl (admin CLI), silo-distil, silo-dashboard
 internal/     cache, backend, registry, kms, daemon, transcript, distilator, admin
 pkg/client/   agent-facing SDK (Read/Write/List/Search) + framework adapters
 web/dashboard v1 read/review web surface
@@ -183,6 +183,30 @@ status` shows which credential source is active.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full build sequence
 and the v1 acceptance checklist.
+
+## Verifying a release
+
+Release assets ship with a SHA-256 manifest (`SHA256SUMS.txt`) signed by
+[cosign](https://docs.sigstore.dev/) keyless signing. There is no public key to
+distribute: the signature is tied to the workflow that produced it, and is
+recorded in the Rekor transparency log.
+
+```bash
+# 1. Verify the manifest signature came from this repo's release workflow.
+cosign verify-blob \
+  --signature SHA256SUMS.txt.sig \
+  --certificate SHA256SUMS.txt.pem \
+  --certificate-identity-regexp '^https://github.com/ToolTropolis/silo/\.github/workflows/release\.yaml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS.txt
+
+# 2. Verify the binaries match the (now-trusted) manifest.
+sha256sum -c SHA256SUMS.txt
+```
+
+Step 1 without step 2 proves the manifest is authentic but says nothing about
+the binary you downloaded; step 2 without step 1 proves the binary matches a
+manifest that anyone could have written. Run both.
 
 ## Contributing
 
