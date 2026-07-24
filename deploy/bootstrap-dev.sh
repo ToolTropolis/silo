@@ -23,6 +23,8 @@ SEAWEED_CONTAINER="${SILO_SEAWEED_CONTAINER:-deploy-seaweedfs-1}"
 VAULT_CONTAINER="${SILO_VAULT_CONTAINER:-deploy-vault-1}"
 ADMIN_KEY="${SILO_ADMIN_ACCESS_KEY:-SILOADMIN}"
 ADMIN_SECRET="${SILO_ADMIN_SECRET_KEY:-SILOADMINSECRET}"
+RUNTIME_KEY="${SILO_RUNTIME_ACCESS_KEY:-SILORUNTIME}"
+RUNTIME_SECRET="${SILO_RUNTIME_SECRET_KEY:-SILORUNTIMESECRET}"
 DEV_TOKEN="${SILO_VAULT_TOKEN:-dev-only-token}"
 
 # Where init output is kept inside the Vault volume so re-runs can unseal.
@@ -78,13 +80,23 @@ else
 fi
 
 echo
+# Two identities, least privilege (NAV-110):
+#   silo-admin   — bucket lifecycle. ONLY siloctl onboard/teardown needs this.
+#   silo-runtime — object CRUD only. Denied CreateBucket/DeleteBucket, which is
+#                  enforced by SeaweedFS, so a compromised daemon or dashboard
+#                  cannot destroy a project's bucket.
 echo "==> Provisioning silo-admin identity in ${SEAWEED_CONTAINER}..."
 echo "s3.configure -user silo-admin -access_key ${ADMIN_KEY} -secret_key ${ADMIN_SECRET} -actions Admin,Read,Write,List,Tagging -apply" \
   | docker exec -i "${SEAWEED_CONTAINER}" weed shell >/dev/null
 
+echo "==> Provisioning silo-runtime identity (no Admin)..."
+echo "s3.configure -user silo-runtime -access_key ${RUNTIME_KEY} -secret_key ${RUNTIME_SECRET} -actions Read,Write,List,Tagging -apply" \
+  | docker exec -i "${SEAWEED_CONTAINER}" weed shell >/dev/null
+
 echo
 echo "Done."
-echo "  S3 access key: ${ADMIN_KEY}   (secret via SILO_ADMIN_SECRET_KEY)"
+echo "  S3 admin key:   ${ADMIN_KEY}     (siloctl only — creates/deletes buckets)"
+echo "  S3 runtime key: ${RUNTIME_KEY}   (silod/dashboard/distil — object CRUD only)"
 echo "  Vault token:   ${DEV_TOKEN}"
 echo
 echo "NOTE: anonymous S3 access is now disabled cluster-wide, by design."

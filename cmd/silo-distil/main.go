@@ -80,8 +80,8 @@ func addStoreFlags(fs *flag.FlagSet) *storeFlags {
 	fs.StringVar(&f.cacheDir, "cache-dir", "./data/cache", "bbolt cache directory")
 	fs.StringVar(&f.endpoint, "backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
 	fs.StringVar(&f.region, "backend-region", "us-east-1", "S3 region")
-	fs.StringVar(&f.accessKey, "s3-access-key", os.Getenv("SILO_S3_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY)")
-	fs.StringVar(&f.secretKey, "s3-secret-key", os.Getenv("SILO_S3_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY)")
+	fs.StringVar(&f.accessKey, "s3-access-key", backend.RuntimeEnv("SILO_S3_ACCESS_KEY", "SILO_RUNTIME_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY / SILO_RUNTIME_ACCESS_KEY)")
+	fs.StringVar(&f.secretKey, "s3-secret-key", backend.RuntimeEnv("SILO_S3_SECRET_KEY", "SILO_RUNTIME_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY / SILO_RUNTIME_SECRET_KEY)")
 	return f
 }
 
