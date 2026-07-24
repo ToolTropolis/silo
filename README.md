@@ -54,25 +54,20 @@ deploy/       docker-compose.yaml (SeaweedFS + 3-node rqlite + Vault) + migratio
 docs/         architecture.md
 ```
 
-## Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ToolTropolis/silo/main/docs/install.sh | sh
-```
-
-Prebuilt binaries for macOS and Linux (amd64/arm64), checksum-verified against a
-cosign-signed manifest. Windows, `go install`, and build-from-source are in
-[docs/installing.md](docs/installing.md).
-
 ## Quickstart
 
 ```bash
+git clone https://github.com/ToolTropolis/silo.git && cd silo
 deploy/demo.sh
 ```
 
 Starts the stack, creates an isolated project, runs the daemon, and writes and
 reads back a memory file — printing every command as it goes. See
 [**docs/QUICKSTART.md**](docs/QUICKSTART.md) for the same thing by hand.
+
+Already have a Silo deployment and just need the client binaries?
+[**docs/installing.md**](docs/installing.md) covers the installer, `go install`,
+and building from source.
 
 ## Requirements
 

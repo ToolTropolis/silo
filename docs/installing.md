@@ -9,9 +9,23 @@ Silo ships four binaries:
 | `silo-distil` | the Distilator consolidation runner |
 | `silo-dashboard` | read/review web surface |
 
-> **Binaries alone don't run Silo.** It needs a storage stack — SeaweedFS,
-> rqlite, and Vault. For a local one, see [QUICKSTART.md](QUICKSTART.md);
-> `deploy/demo.sh` brings the whole thing up in one command.
+## Do you actually need these?
+
+**Binaries alone don't run Silo.** It needs a storage stack — SeaweedFS, rqlite,
+and Vault — and without one, every command fails on connect:
+
+```
+siloctl status: connect registry: ... connection refused
+```
+
+| You are… | Use |
+|---|---|
+| Trying Silo for the first time | [QUICKSTART.md](QUICKSTART.md) — `deploy/demo.sh` runs the stack *and* the binaries |
+| Running an agent host that talks to a Silo someone else deployed | this page — you need `silod` only |
+| Administering a deployed Silo from your laptop | this page — you need `siloctl` |
+| Deploying Silo itself | this page, plus your own SeaweedFS/rqlite/Vault |
+
+If you're in the first row, stop here and read the quickstart instead.
 
 ---
 
