@@ -188,17 +188,21 @@ else
   BIN_DIR="/usr/local/bin"
 fi
 
+# Try to create it first: a directory that doesn't exist yet is not "writable",
+# and testing -w before mkdir escalates to sudo for a path the user could have
+# made themselves.
+mkdir -p "$BIN_DIR" 2>/dev/null || true
+
 SUDO=""
 if [ ! -w "$BIN_DIR" ]; then
   if command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
-    warn "${BIN_DIR} is not writable; using sudo to create symlinks."
+    warn "${BIN_DIR} needs elevated permissions; using sudo to create symlinks."
   else
     die "${BIN_DIR} is not writable and sudo is unavailable. Set SILO_BIN_DIR to a writable directory."
   fi
+  $SUDO mkdir -p "$BIN_DIR"
 fi
-
-$SUDO mkdir -p "$BIN_DIR" 2>/dev/null || true
 for cmd in $BINARIES; do
   $SUDO ln -sf "${INSTALL_DIR}/${cmd}" "${BIN_DIR}/${cmd}"
 done
