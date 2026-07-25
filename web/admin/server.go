@@ -80,6 +80,14 @@ type Server struct {
 	// an absent prober reports "cannot verify" rather than a false pass.
 	backendProbe BackendProber
 	credsProbe   CredentialProber
+	// tokens mints agent tokens for the Connect step. Optional: without it the
+	// wizard shows the config to copy but cannot issue a credential.
+	tokens TokenMinter
+	// vault holds a freshly minted token for its single reveal.
+	vault *tokenVault
+	// agentDaemonAddr and mcpBinary are what the generated .mcp.json points at.
+	agentDaemonAddr string
+	mcpBinary       string
 	// tracker holds in-flight provisioning progress, so the wizard can show
 	// which layer failed rather than only that something did.
 	tracker   *provisionTracker
@@ -103,6 +111,22 @@ type Config struct {
 	// before it creates anything. Optional.
 	BackendProbe BackendProber
 	CredsProbe   CredentialProber
+	// Tokens issues agent tokens from the Connect step. Optional.
+	Tokens TokenMinter
+	// AgentDaemonAddr is the daemon address written into a repo's .mcp.json —
+	// the address an *agent* uses, which is not the admin socket this console
+	// talks to.
+	AgentDaemonAddr string
+	// MCPBinary is the command name written into .mcp.json.
+	MCPBinary string
+}
+
+// TokenMinter issues agent tokens. Narrow on purpose: the console mints and
+// lists, and teardown revokes, but nothing here needs to verify one.
+type TokenMinter interface {
+	MintToken(ctx context.Context, projectID, label, createdBy string) (string, error)
+	ListTokens(ctx context.Context, projectID string) ([]registry.AgentToken, error)
+	RevokeToken(ctx context.Context, hash string) error
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -111,16 +135,20 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		registry:     cfg.Registry,
-		settings:     cfg.Settings,
-		daemon:       cfg.Daemon,
-		prov:         cfg.Prov,
-		token:        cfg.Token,
-		backendProbe: cfg.BackendProbe,
-		credsProbe:   cfg.CredsProbe,
-		tracker:      newProvisionTracker(),
-		templates:    views,
-		mux:          http.NewServeMux(),
+		registry:        cfg.Registry,
+		settings:        cfg.Settings,
+		daemon:          cfg.Daemon,
+		prov:            cfg.Prov,
+		token:           cfg.Token,
+		backendProbe:    cfg.BackendProbe,
+		credsProbe:      cfg.CredsProbe,
+		tokens:          cfg.Tokens,
+		vault:           newTokenVault(),
+		agentDaemonAddr: cfg.AgentDaemonAddr,
+		mcpBinary:       cfg.MCPBinary,
+		tracker:         newProvisionTracker(),
+		templates:       views,
+		mux:             http.NewServeMux(),
 	}
 	s.routes()
 	return s, nil
@@ -204,21 +232,22 @@ func serveAsset(name, contentType string) http.HandlerFunc {
 }
 
 var viewTitles = map[string]string{
-	"cache.html":         "Cache",
-	"settings.html":      "Settings",
-	"projects.html":      "Projects",
-	"wizard_name.html":   "Onboard a project",
-	"wizard_checks.html": "Onboard — checks",
-	"wizard_review.html": "Onboard — review",
-	"wizard_status.html": "Onboard — provisioning",
-	"wizard_done.html":   "Onboard — done",
-	"error.html":         "Error",
+	"cache.html":          "Cache",
+	"settings.html":       "Settings",
+	"projects.html":       "Projects",
+	"wizard_name.html":    "Onboard a project",
+	"wizard_checks.html":  "Onboard — checks",
+	"wizard_review.html":  "Onboard — review",
+	"wizard_connect.html": "Onboard — connect a repo",
+	"wizard_status.html":  "Onboard — provisioning",
+	"wizard_done.html":    "Onboard — done",
+	"error.html":          "Error",
 }
 
 // contentViews are every page rendered inside the app shell.
 var contentViews = []string{
 	"cache.html", "settings.html", "projects.html",
-	"wizard_name.html", "wizard_checks.html", "wizard_review.html",
+	"wizard_name.html", "wizard_checks.html", "wizard_review.html", "wizard_connect.html",
 	"wizard_status.html", "wizard_done.html",
 }
 

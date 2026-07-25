@@ -74,8 +74,8 @@
           {{if $s.Err}}
             <a class="btn btn-primary" href="/onboard/name?project={{.Project}}">Try again</a>
           {{else}}
-            <a class="btn btn-primary" href="/onboard/done?project={{.Project}}">
-              Next steps {{template "ico-arrow-right" .}}
+            <a class="btn btn-primary" href="/onboard/connect?project={{.Project}}">
+              Connect a repo {{template "ico-arrow-right" .}}
             </a>
           {{end}}
         {{end}}

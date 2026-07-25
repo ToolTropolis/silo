@@ -58,6 +58,10 @@ func run(args []string) error {
 	weedBinary := fs.String("weed-binary", "weed", "path to the weed binary, for issuing scoped credentials")
 	weedFiler := fs.String("weed-filer", "localhost:8888", "SeaweedFS filer address")
 	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master address")
+	agentDaemon := fs.String("agent-daemon", "http://127.0.0.1:8500",
+		"the daemon address written into a repo's .mcp.json — the address an AGENT reaches, which is not --daemon (this console's admin socket)")
+	mcpBinary := fs.String("mcp-binary", "silo-mcp",
+		"the command name written into .mcp.json; use an absolute path if silo-mcp is not on the agent's PATH")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,9 +79,12 @@ func run(args []string) error {
 	defer reg.Close()
 
 	cfg := webadmin.Config{
-		Registry: reg,
-		Settings: reg,
-		Token:    *token,
+		Registry:        reg,
+		Settings:        reg,
+		Tokens:          reg,
+		Token:           *token,
+		AgentDaemonAddr: *agentDaemon,
+		MCPBinary:       *mcpBinary,
 	}
 
 	// The daemon is optional: without it the console still shows and edits
@@ -94,6 +101,7 @@ func run(args []string) error {
 		prov, err := newProvisioner(ctx, provisionerConfig{
 			registry:        reg,
 			settings:        reg,
+			tokens:          reg,
 			backendEndpoint: *backendEndpoint,
 			backendRegion:   *backendRegion,
 			accessKey:       *s3AccessKey,
@@ -187,6 +195,7 @@ func isSocketPath(addr string) bool { return !strings.Contains(addr, ":") }
 type provisionerConfig struct {
 	registry                          registry.TenantRegistry
 	settings                          admin.SettingsRemover
+	tokens                            admin.TokenRevoker
 	backendEndpoint, backendRegion    string
 	accessKey, secretKey              string
 	vaultAddr, vaultToken             string
@@ -222,6 +231,7 @@ func newProvisioner(ctx context.Context, c provisionerConfig) (*webadmin.Onboard
 		Backend:  be,
 		Creds:    creds,
 		Settings: c.settings,
+		Tokens:   c.tokens,
 	}
 	// Teardown purges the local cache before destroying the bucket, and that
 	// purge only reaches the right cache directory through the daemon. Without

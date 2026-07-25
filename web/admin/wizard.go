@@ -24,7 +24,8 @@ var wizardSteps = []struct {
 	{"name", "Name", "Choose the project ID"},
 	{"checks", "Checks", "Verify onboarding will succeed"},
 	{"review", "Review", "Confirm what will be created"},
-	{"done", "Done", "Connect an agent"},
+	{"connect", "Connect", "Wire a repo to this project"},
+	{"done", "Done", "Start using it"},
 }
 
 // ProvisionState tracks one in-flight or finished onboarding.
@@ -163,6 +164,12 @@ func (s *Server) handleWizard(w http.ResponseWriter, r *http.Request) {
 		s.wizardProvision(w, r)
 	case "status":
 		s.wizardStatus(w, r)
+	case "connect":
+		s.wizardConnect(w, r)
+	case "mint":
+		s.wizardMint(w, r)
+	case "write":
+		s.wizardWrite(w, r)
 	case "done":
 		s.wizardDone(w, r)
 	default:
@@ -270,9 +277,6 @@ func (s *Server) wizardStatus(w http.ResponseWriter, r *http.Request) {
 
 	data := s.wizardData("review", projectID)
 	data["State"] = state
-	if state.Done && state.Err == "" {
-		data["Step"] = "done"
-	}
 	s.render(w, "wizard_status.html", data)
 }
 

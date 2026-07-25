@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/tooltropolis/silo/internal/registry"
 )
@@ -201,11 +202,23 @@ func (s *Server) handleCacheAction(w http.ResponseWriter, r *http.Request) {
 // redirectFlash and redirectErr POST-redirect-GET so a refresh cannot replay a
 // destructive action.
 func redirectFlash(w http.ResponseWriter, r *http.Request, path, msg string) {
-	http.Redirect(w, r, path+"?flash="+urlEscape(msg), http.StatusSeeOther)
+	http.Redirect(w, r, withParam(path, "flash", msg), http.StatusSeeOther)
 }
 
 func redirectErr(w http.ResponseWriter, r *http.Request, path, msg string) {
-	http.Redirect(w, r, path+"?err="+urlEscape(msg), http.StatusSeeOther)
+	http.Redirect(w, r, withParam(path, "err", msg), http.StatusSeeOther)
+}
+
+// withParam appends a query parameter, joining correctly whether or not the
+// path already carries one. Blindly appending "?" produced a second question
+// mark on paths like /onboard/connect?project=x, which browsers read as part of
+// the previous value — so the message silently vanished.
+func withParam(path, key, value string) string {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + key + "=" + urlEscape(value)
 }
 
 func errString(err error) string {
