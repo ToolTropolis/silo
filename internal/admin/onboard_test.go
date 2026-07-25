@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/tooltropolis/silo/internal/backend"
+	"github.com/tooltropolis/silo/internal/project"
 	"github.com/tooltropolis/silo/internal/registry"
 )
 
@@ -124,7 +125,7 @@ func TestOnboard_HappyPath(t *testing.T) {
 func TestOnboard_RollsBackOnFailure(t *testing.T) {
 	t.Run("fail at register", func(t *testing.T) {
 		r, k, b, c := &fakeRegistry{failRegister: true}, &fakeKMS{}, &fakeBackend{}, &fakeCreds{}
-		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "p"); err == nil {
+		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "proj-11"); err == nil {
 			t.Fatal("want error")
 		}
 		// Nothing succeeded, so nothing to compensate.
@@ -135,7 +136,7 @@ func TestOnboard_RollsBackOnFailure(t *testing.T) {
 
 	t.Run("fail at create key", func(t *testing.T) {
 		r, k, b, c := &fakeRegistry{}, &fakeKMS{failCreate: true}, &fakeBackend{}, &fakeCreds{}
-		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "p"); err == nil {
+		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "proj-11"); err == nil {
 			t.Fatal("want error")
 		}
 		if !r.deregistered {
@@ -148,7 +149,7 @@ func TestOnboard_RollsBackOnFailure(t *testing.T) {
 
 	t.Run("fail at create bucket", func(t *testing.T) {
 		r, k, b, c := &fakeRegistry{}, &fakeKMS{}, &fakeBackend{failCreate: true}, &fakeCreds{}
-		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "p"); err == nil {
+		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "proj-11"); err == nil {
 			t.Fatal("want error")
 		}
 		if !(r.deregistered && k.revoked) {
@@ -161,7 +162,7 @@ func TestOnboard_RollsBackOnFailure(t *testing.T) {
 
 	t.Run("fail at issue credential", func(t *testing.T) {
 		r, k, b, c := &fakeRegistry{}, &fakeKMS{}, &fakeBackend{}, &fakeCreds{failIssue: true}
-		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "p"); err == nil {
+		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "proj-11"); err == nil {
 			t.Fatal("want error")
 		}
 		if !(r.deregistered && k.revoked && b.deleted) {
@@ -175,7 +176,7 @@ func TestOnboard_RollsBackOnFailure(t *testing.T) {
 
 	t.Run("fail at persist refs rolls back everything", func(t *testing.T) {
 		r, k, b, c := &fakeRegistry{failRefs: true}, &fakeKMS{}, &fakeBackend{}, &fakeCreds{}
-		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "p"); err == nil {
+		if err := newOnboarder(r, k, b, c).Onboard(context.Background(), "proj-11"); err == nil {
 			t.Fatal("want error")
 		}
 		if !(r.deregistered && k.revoked && b.deleted && c.revoked) {
@@ -192,5 +193,26 @@ func TestOnboard_EmptyProjectID(t *testing.T) {
 	}
 	if r.registered {
 		t.Fatal("registered despite empty projectID")
+	}
+}
+
+// TestOnboard_RejectsInvalidProjectID: onboarding is the authoritative gate.
+// An ID that gets past here is baked into a bucket name and a cache filename
+// permanently, so it must be rejected before any resource is provisioned.
+func TestOnboard_RejectsInvalidProjectID(t *testing.T) {
+	for _, bad := range []string{"", "p", "../escape", "a/b", "Repo1", "a_b", "proj.11"} {
+		r, k, b, c := &fakeRegistry{}, &fakeKMS{}, &fakeBackend{}, &fakeCreds{}
+		err := newOnboarder(r, k, b, c).Onboard(context.Background(), bad)
+		if err == nil {
+			t.Errorf("Onboard(%q) should be rejected", bad)
+			continue
+		}
+		if !errors.Is(err, project.ErrInvalidID) {
+			t.Errorf("Onboard(%q): want ErrInvalidID, got %v", bad, err)
+		}
+		// Nothing may be provisioned for an ID that never passed validation.
+		if r.registered || k.created || b.created || c.issued {
+			t.Errorf("Onboard(%q) provisioned resources despite an invalid ID", bad)
+		}
 	}
 }

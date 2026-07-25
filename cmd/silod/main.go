@@ -13,6 +13,7 @@ import (
 	"github.com/tooltropolis/silo/internal/cache"
 	"github.com/tooltropolis/silo/internal/daemon"
 	"github.com/tooltropolis/silo/internal/devstack"
+	"github.com/tooltropolis/silo/internal/project"
 )
 
 func main() {
@@ -96,11 +97,15 @@ func parseTokens(spec string) (daemon.StaticTokenVerifier, error) {
 		if pair == "" {
 			continue
 		}
-		token, project, ok := strings.Cut(pair, "=")
-		if !ok || token == "" || project == "" {
+		token, projectID, ok := strings.Cut(pair, "=")
+		if !ok || token == "" || projectID == "" {
 			return nil, fmt.Errorf("bad --tokens entry %q: want token=projectID", pair)
 		}
-		v[token] = project
+		// Fail at startup rather than on the first write to that project.
+		if err := project.ValidateID(projectID); err != nil {
+			return nil, fmt.Errorf("bad --tokens entry %q: %w", pair, err)
+		}
+		v[token] = projectID
 	}
 	if len(v) == 0 {
 		return nil, fmt.Errorf("--tokens contained no valid token=projectID pairs")
