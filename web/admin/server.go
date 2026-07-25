@@ -166,6 +166,9 @@ func (s *Server) routes() {
 	})
 	s.mux.HandleFunc("/settings", s.handleSettings)
 	s.mux.HandleFunc("/projects", s.handleProjects)
+	s.mux.HandleFunc("/project", s.handleProject)
+	s.mux.HandleFunc("/tokens/mint", s.handleMintToken)
+	s.mux.HandleFunc("/tokens/revoke", s.handleRevokeToken)
 	// The wizard owns /onboard/*; the bare /onboard stays a plain POST so the
 	// existing single-form flow and its tests keep working.
 	s.mux.HandleFunc("/onboard", s.handleOnboard)
@@ -235,6 +238,7 @@ var viewTitles = map[string]string{
 	"cache.html":          "Cache",
 	"settings.html":       "Settings",
 	"projects.html":       "Projects",
+	"project.html":        "Project",
 	"wizard_name.html":    "Onboard a project",
 	"wizard_checks.html":  "Onboard — checks",
 	"wizard_review.html":  "Onboard — review",
@@ -246,7 +250,7 @@ var viewTitles = map[string]string{
 
 // contentViews are every page rendered inside the app shell.
 var contentViews = []string{
-	"cache.html", "settings.html", "projects.html",
+	"cache.html", "settings.html", "projects.html", "project.html",
 	"wizard_name.html", "wizard_checks.html", "wizard_review.html", "wizard_connect.html",
 	"wizard_status.html", "wizard_done.html",
 }

@@ -37,6 +37,7 @@
             <th>Project</th>
             <th>Status</th>
             <th>Bucket</th>
+            <th>Tokens</th>
             <th class="num">Unsynced</th>
             <th>Teardown</th>
           </tr>
@@ -44,7 +45,7 @@
         <tbody>
         {{range .Rows}}
           <tr>
-            <td><code class="id">{{.Record.ProjectID}}</code></td>
+            <td><a href="/project?project={{.Record.ProjectID}}"><code class="id">{{.Record.ProjectID}}</code></a></td>
             <td>
               <span class="badge {{if eq .Record.Status "active"}}ok{{else if eq .Record.Status "decommissioning"}}warn{{else}}{{end}}">
                 <span class="dot"></span>{{.Record.Status}}
@@ -53,6 +54,9 @@
             <td>
               {{if .Record.BucketName}}<code>{{.Record.BucketName}}</code>
               {{else}}<span class="subtle">deleted</span>{{end}}
+            </td>
+            <td class="fs-sm">
+              <a href="/project?project={{.Record.ProjectID}}">Manage</a>
             </td>
             <td class="num">
               {{if .PendingKnown}}
