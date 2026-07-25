@@ -12,6 +12,14 @@ type ProjectRecord struct {
 	KeyID        string // KMS key ID for this project's SSE key
 	CreatedAt    string
 	Status       string // "active" | "decommissioning" | "decommissioned"
+	// Generation identifies this incarnation of the project. The local cache
+	// file is named after the projectID, so a project torn down and re-onboarded
+	// under the same ID would otherwise inherit the previous tenant's cached
+	// memory. The generation is stamped into the cache file and checked on open.
+	//
+	// Empty for records created before generations existed; treated as
+	// unverifiable rather than as a match.
+	Generation string
 }
 
 // TenantRegistry is the source of truth for project -> bucket/credential/key

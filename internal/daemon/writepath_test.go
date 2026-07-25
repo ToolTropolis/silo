@@ -92,7 +92,7 @@ func newTestDaemon(t *testing.T, b backend.DurableBackend) *Daemon {
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(b, c, nil, nil)
+	return New(b, c, newGenRegistry(), nil)
 }
 
 // TestSafeWrite_RetriesOnConflict forces a concurrent-write conflict in the
@@ -136,7 +136,7 @@ func TestSafeWrite_QueuesWhenBackendDown(t *testing.T) {
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	d := New(fb, c, nil, nil)
+	d := New(fb, c, newGenRegistry(), nil)
 
 	outcome, err := d.SafeWrite(context.Background(), "proj-11", "notes.md",
 		func([]byte) []byte { return []byte("queued content") }, "agent-1", "s1")
@@ -175,7 +175,7 @@ func TestSafeWrite_ReportsDurableWhenBackendUp(t *testing.T) {
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	d := New(fb, c, nil, nil)
+	d := New(fb, c, newGenRegistry(), nil)
 
 	outcome, err := d.SafeWrite(context.Background(), "proj-11", "notes.md",
 		func([]byte) []byte { return []byte("durable content") }, "agent-1", "s1")

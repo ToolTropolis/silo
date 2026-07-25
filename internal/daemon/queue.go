@@ -25,6 +25,17 @@ func (d *Daemon) SyncProject(ctx context.Context, projectID string) error {
 		return fmt.Errorf("daemon: sync %q: backend not reachable: %w", projectID, err)
 	}
 
+	// Bind before draining. A queue belonging to a previous tenant would
+	// otherwise be replayed into this project's bucket — a cross-tenant write,
+	// worse than a stale read. Binding discards such a queue first.
+	//
+	// Unverifiable ownership blocks the drain rather than risking that: the
+	// writes stay safely queued and the next pass retries once the registry is
+	// reachable again.
+	if err := d.bindCache(ctx, projectID); err != nil {
+		return fmt.Errorf("daemon: sync %q: %w", projectID, err)
+	}
+
 	pending, err := d.cache.DrainQueue(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("daemon: sync %q: drain queue: %w", projectID, err)
