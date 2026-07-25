@@ -24,6 +24,15 @@ func (d *Daemon) Read(ctx context.Context, projectID, path string) ([]byte, erro
 		_ = d.cache.Put(ctx, projectID, path, content) // keep the cache warm
 		return content, nil
 	case errors.Is(err, backend.ErrNotFound):
+		// The backend is the source of truth, so a 404 is a positive statement
+		// that this path does not exist. A cached entry for it is known-wrong
+		// and must not survive to be served by the fallback below during a
+		// later outage. Best-effort, like the cache-warm above.
+		//
+		// Safe because the adapter classifies not-found strictly (a typed
+		// NoSuchKey or an actual 404, never a 5xx or a reset), so an unreachable
+		// backend can't reach this branch and drop good entries.
+		_ = d.cache.Delete(ctx, projectID, path)
 		return nil, ErrNotFound
 	}
 
