@@ -7,34 +7,86 @@
       <span class="n-ico i-pass">{{template "ico-check-circle" .}}</span>
       <div class="n-body">
         <strong>{{.Project}} is provisioned.</strong>
-        <p>Point a daemon at it and agents can start reading and writing memory.</p>
+        <p>Wire it into a repo and your agents get persistent memory scoped to this project.</p>
       </div>
     </div>
 
     <div class="card">
       <div class="card-head">
         <div>
-          <h2>Connect an agent</h2>
-          <p class="hint">A token scopes a caller to exactly one project — that is the daemon's authorization boundary.</p>
+          <h2>Connect a repo</h2>
+          <p class="hint">Silo speaks the Model Context Protocol, so an agent calls it as tools — no file sync, no framework hooks.</p>
         </div>
       </div>
       <div class="card-body">
         <div class="lbl" style="margin-bottom:6px">1. Run a daemon for this project</div>
-        <pre class="snippet"><span class="c"># --tokens maps a bearer token to a project; keep the token secret.</span>
-silod --tokens "&lt;your-token&gt;={{.Project}}" \
+        <pre class="snippet"><span class="c"># The token maps a bearer credential to exactly one project.
+# Keep it secret — it is what scopes an agent to {{.Project}}.</span>
+silod --tokens "$SILO_TOKEN={{.Project}}" \
       --rqlite http://localhost:4001 \
       --admin-listen ./data/silod-admin.sock</pre>
 
-        <div class="lbl" style="margin:16px 0 6px">2. Write a memory</div>
-        <pre class="snippet">curl -X POST http://127.0.0.1:8500/v1/write \
-  -H "Authorization: Bearer &lt;your-token&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{"path":"memory/notes.md","content":"'"$(printf 'hello' | base64)"'","actor":"agent-1"}'</pre>
-        <p class="help">Content is base64 in JSON, since the API carries raw bytes.</p>
+        <div class="lbl" style="margin:18px 0 6px">2. Add <code>.mcp.json</code> to the repo</div>
+        <pre class="snippet">{
+  "mcpServers": {
+    "silo": {
+      "command": "silo-mcp",
+      "env": {
+        "SILO_TOKEN": "${SILO_TOKEN}",
+        "SILO_PROJECT": "{{.Project}}",
+        "SILO_DAEMON_ADDR": "http://127.0.0.1:8500"
+      }
+    }
+  }
+}</pre>
+        <p class="help">
+          <code>${SILO_TOKEN}</code> is expanded from your shell environment at launch, so the
+          token itself never lands in a file you might commit. Set it with
+          <code>export SILO_TOKEN=…</code>.
+        </p>
 
-        <div class="lbl" style="margin:16px 0 6px">3. Read it back</div>
-        <pre class="snippet">curl http://127.0.0.1:8500/v1/read?path=memory/notes.md \
-  -H "Authorization: Bearer &lt;your-token&gt;"</pre>
+        <div class="lbl" style="margin:18px 0 6px">3. Restart the agent</div>
+        <p class="help mt-0">
+          It will discover four tools — <code>silo_read</code>, <code>silo_write</code>,
+          <code>silo_list</code>, <code>silo_search</code> — and can then remember things
+          across sessions.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>What the agent can do</h2>
+          <p class="hint">Anything it writes here survives the session that wrote it.</p>
+        </div>
+      </div>
+      <div class="card-body tight">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Tool</th><th>Purpose</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>silo_read</code></td>
+                <td>Recall a memory file written in an earlier session.</td>
+              </tr>
+              <tr>
+                <td><code>silo_write</code></td>
+                <td>Store a memory file. Replaces the whole file, so read first.</td>
+              </tr>
+              <tr>
+                <td><code>silo_list</code></td>
+                <td>Discover what has been remembered for this project.</td>
+              </tr>
+              <tr>
+                <td><code>silo_search</code></td>
+                <td>Find a specific fact without reading everything.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -42,8 +94,8 @@ silod --tokens "&lt;your-token&gt;={{.Project}}" \
       <div class="card-head"><div><h2>Recommended next</h2></div></div>
       <div class="card-body">
         <p class="mt-0 muted fs-sm">
-          New projects inherit the fleet retention default. Without one, a project's local
-          cache grows without bound.
+          New projects inherit the fleet retention default. Without one, this project's
+          local cache grows without bound.
         </p>
         <div class="btn-row">
           <a class="btn" href="/settings">Set a retention policy</a>

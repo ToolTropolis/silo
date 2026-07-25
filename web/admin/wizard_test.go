@@ -244,8 +244,23 @@ func TestWizard_DoneShowsConnectionInstructions(t *testing.T) {
 	if !strings.Contains(body, "silod --tokens") {
 		t.Error("the done step should show how to run a daemon for the project")
 	}
-	if !strings.Contains(body, "/v1/write") {
-		t.Error("the done step should show how to write a memory")
+	// The whole point of onboarding is wiring a repo to Silo, so the final step
+	// must hand over real agent config rather than raw API calls.
+	if !strings.Contains(body, "mcpServers") {
+		t.Error("the done step should emit .mcp.json config for the agent runtime")
+	}
+	if !strings.Contains(body, "SILO_PROJECT") || !strings.Contains(body, "newproj") {
+		t.Error("the emitted config should be scoped to this project")
+	}
+	// The token must be referenced by environment variable, never inlined —
+	// .mcp.json is normally committed.
+	if !strings.Contains(body, "${SILO_TOKEN}") {
+		t.Error("the token must be an env reference so it is not committed")
+	}
+	for _, tool := range []string{"silo_read", "silo_write", "silo_list", "silo_search"} {
+		if !strings.Contains(body, tool) {
+			t.Errorf("the done step should name the %s tool", tool)
+		}
 	}
 }
 
