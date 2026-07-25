@@ -20,6 +20,16 @@ type LocalCache interface {
 	// (backend unreachable). Drained by the sync worker on recovery.
 	Enqueue(ctx context.Context, projectID string, w PendingWrite) error
 	DrainQueue(ctx context.Context, projectID string) ([]PendingWrite, error)
+
+	// QueueDepth reports how many writes are buffered for a project without
+	// consuming them.
+	//
+	// Divergence from the spec's §3.2 interface, added deliberately: DrainQueue
+	// is destructive, so with the original five methods the amount of unsynced
+	// data was unobservable — counting the backlog meant emptying it. There is
+	// no way to express "how much is at risk on this disk?" otherwise, and that
+	// question has to be answerable before a shutdown or a teardown.
+	QueueDepth(ctx context.Context, projectID string) (int, error)
 }
 
 // PendingWrite is a write buffered locally while the durable backend was
