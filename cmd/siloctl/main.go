@@ -5,12 +5,16 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/tooltropolis/silo/internal/admin"
 	"github.com/tooltropolis/silo/internal/backend"
@@ -157,6 +161,8 @@ func runOnboard(args []string) error {
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
+	daemonAddr := fs.String("daemon", os.Getenv("SILO_DAEMON_ADDR"), "daemon address, to report unsynced writes (or SILO_DAEMON_ADDR)")
+	daemonTokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs for querying the daemon (or SILO_TOKENS)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -177,8 +183,13 @@ func runStatus(args []string) error {
 		return nil
 	}
 
+	// Queue depths come from the daemon, which owns the bbolt files — siloctl
+	// must not open them itself, since a second process fighting the daemon for
+	// the bbolt lock is a good way to hang both.
+	queues := fetchQueueDepths(ctx, *daemonAddr, *daemonTokens)
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "PROJECT\tSTATUS\tBUCKET\tNEXT TEARDOWN STEP")
+	fmt.Fprintln(w, "PROJECT\tSTATUS\tBUCKET\tUNSYNCED\tNEXT TEARDOWN STEP")
 	for _, rec := range recs {
 		bucket := rec.BucketName
 		if bucket == "" {
@@ -192,9 +203,77 @@ func runStatus(args []string) error {
 		if pending == "" {
 			pending = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", rec.ProjectID, rec.Status, bucket, pending)
+		// "?" rather than "0" when the daemon wasn't reachable: claiming zero
+		// unsynced writes without having checked is exactly the false assurance
+		// this column exists to remove.
+		unsynced := "?"
+		if q, ok := queues[rec.ProjectID]; ok {
+			unsynced = strconv.Itoa(q)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", rec.ProjectID, rec.Status, bucket, unsynced, pending)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	if *daemonAddr == "" || *daemonTokens == "" {
+		fmt.Println("\nUNSYNCED is \"?\" — pass --daemon and --tokens to report writes still")
+		fmt.Println("buffered on the daemon's disk, e.g.")
+		fmt.Println("  siloctl status --daemon=http://127.0.0.1:8500 --tokens \"tok=proj\"")
+	}
+	return nil
+}
+
+// fetchQueueDepths asks the daemon how many writes are still unsynced per
+// project.
+//
+// One request per token, because the daemon deliberately scopes /v1/queue to the
+// caller's own project — there is no endpoint that reports every project's queue
+// behind a single agent token, and adding one would put fleet-wide state behind
+// an agent credential.
+//
+// Failures are silent by design: a project simply keeps its "?" and the rest of
+// status still prints. This is the command you run when something is broken, so
+// it must not fail just because the daemon is one of the broken things.
+func fetchQueueDepths(ctx context.Context, addr, tokens string) map[string]int {
+	out := map[string]int{}
+	if addr == "" || tokens == "" {
+		return out
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, pair := range splitCSV(tokens) {
+		token, projectID, ok := strings.Cut(pair, "=")
+		if !ok || token == "" || projectID == "" {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(addr, "/")+"/v1/queue", nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		var body struct {
+			Project string `json:"project"`
+			Pending int    `json:"pending"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		if decodeErr != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+		// Trust the daemon's answer about which project it reported on, not the
+		// projectID in our own flag — they should agree, and if they don't the
+		// daemon is authoritative about its own queue.
+		if body.Project != "" {
+			out[body.Project] = body.Pending
+		}
+	}
+	return out
 }
 
 // runTeardown performs ONE confirmed teardown layer.

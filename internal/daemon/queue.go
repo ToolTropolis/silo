@@ -65,6 +65,24 @@ func (d *Daemon) QueueDepth(ctx context.Context, projectID string) (int, error) 
 	return d.cache.QueueDepth(ctx, projectID)
 }
 
+// oldestQueuer is implemented by caches that can report the head of the queue.
+// Kept off LocalCache: the timestamp is a reporting nicety, and the interface is
+// the contract every implementation must satisfy.
+type oldestQueuer interface {
+	OldestQueued(ctx context.Context, projectID string) (string, error)
+}
+
+// OldestQueued returns when the oldest still-unsynced write was buffered, or ""
+// if the cache can't report it. Depth alone is hard to act on: "12 pending"
+// reads very differently from "12 pending, oldest 3 hours ago".
+func (d *Daemon) OldestQueued(ctx context.Context, projectID string) (string, error) {
+	q, ok := d.cache.(oldestQueuer)
+	if !ok {
+		return "", nil
+	}
+	return q.OldestQueued(ctx, projectID)
+}
+
 // backendReachable probes the backend with a harmless Get so a drain doesn't
 // start against a still-down backend. A not-found result means the backend is
 // up (it answered); any other error means it's still unreachable.

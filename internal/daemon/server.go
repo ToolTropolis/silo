@@ -87,7 +87,44 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("/v1/queue", s.handleQueue)
 	return mux
+}
+
+// queueResponse reports how much of a project's memory is still only on this
+// host's disk.
+type queueResponse struct {
+	Project        string `json:"project"`
+	Pending        int    `json:"pending"`
+	OldestQueuedAt string `json:"oldest_queued_at,omitempty"`
+}
+
+// handleQueue answers "is any of my memory still unsynced?".
+//
+// It takes no project parameter: the project comes from the bearer token like
+// every other route, so an agent can ask about its own silo and nothing else.
+// Fleet-wide queue state is an operator question and deliberately does not live
+// behind an agent's token.
+func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.authorize(r)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err)
+		return
+	}
+	depth, err := s.daemon.QueueDepth(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	resp := queueResponse{Project: projectID, Pending: depth}
+	if depth > 0 {
+		// Best-effort: the depth is the answer, and an unreadable timestamp
+		// shouldn't fail the request.
+		if oldest, err := s.daemon.OldestQueued(r.Context(), projectID); err == nil {
+			resp.OldestQueuedAt = oldest
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Listen binds addr without serving. A path (no colon) is treated as a Unix

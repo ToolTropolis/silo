@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -40,6 +41,8 @@ func run(args []string) error {
 	accessKey := fs.String("s3-access-key", backend.RuntimeEnv("SILO_S3_ACCESS_KEY", "SILO_RUNTIME_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY / SILO_RUNTIME_ACCESS_KEY)")
 	secretKey := fs.String("s3-secret-key", backend.RuntimeEnv("SILO_S3_SECRET_KEY", "SILO_RUNTIME_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY / SILO_RUNTIME_SECRET_KEY)")
 	cacheDir := fs.String("cache-dir", "./data/dashboard-cache", "bbolt cache directory (used by the promote path)")
+	daemonAddr := fs.String("daemon", os.Getenv("SILO_DAEMON_ADDR"), "silod address, to report unsynced writes (or SILO_DAEMON_ADDR)")
+	daemonTokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs for querying the daemon (or SILO_TOKENS)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -88,7 +91,17 @@ func run(args []string) error {
 	d := daemon.New(be, localCache, reg, nil)
 	reviewer := distilator.NewReviewer(distilator.NewDaemonStore(d), d)
 
-	srv, err := dashboard.NewServer(reg, be, reviewer)
+	// Queue depth deliberately does NOT come from the local daemon object: it
+	// would read the dashboard's own cache directory, which is not the one silod
+	// writes to, and confidently report 0 while writes sit unsynced. Pointing
+	// both at one directory is worse — two processes contending for the same
+	// bbolt lock. So ask the daemon over HTTP, or report "?" if not configured.
+	var queues dashboard.QueueReader
+	if *daemonAddr != "" && *daemonTokens != "" {
+		queues = newDaemonQueueReader(*daemonAddr, *daemonTokens)
+	}
+
+	srv, err := dashboard.NewServer(reg, be, reviewer, queues)
 	if err != nil {
 		return err
 	}
@@ -110,4 +123,60 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// daemonQueueReader asks silod for a project's unsynced write count over HTTP.
+//
+// It holds one token per project because /v1/queue is scoped to the caller's own
+// project by design — there is no all-projects view behind an agent token, and
+// adding one would put fleet-wide state behind an agent credential.
+type daemonQueueReader struct {
+	addr   string
+	tokens map[string]string // projectID -> token
+	client *http.Client
+}
+
+func newDaemonQueueReader(addr, tokenSpec string) *daemonQueueReader {
+	tokens := map[string]string{}
+	for _, pair := range strings.Split(tokenSpec, ",") {
+		token, projectID, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if ok && token != "" && projectID != "" {
+			tokens[projectID] = token
+		}
+	}
+	return &daemonQueueReader{
+		addr:   strings.TrimSuffix(addr, "/"),
+		tokens: tokens,
+		client: &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+// QueueDepth returns an error for a project it has no token for, so the view
+// renders "?" rather than a fabricated 0.
+func (q *daemonQueueReader) QueueDepth(ctx context.Context, projectID string) (int, error) {
+	token, ok := q.tokens[projectID]
+	if !ok {
+		return 0, fmt.Errorf("no token configured for project %q", projectID)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, q.addr+"/v1/queue", nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("daemon returned %d", resp.StatusCode)
+	}
+	var body struct {
+		Pending int `json:"pending"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, err
+	}
+	return body.Pending, nil
 }
