@@ -24,7 +24,7 @@
   <div class="card-head">
     <div>
       <h2>Projects</h2>
-      <p class="hint">Teardown runs one confirmed layer at a time; each is independently irreversible.</p>
+      <p class="hint">Deleting a project takes four confirmed steps. Each destroys something different, and none can be undone.</p>
     </div>
   </div>
 
@@ -40,7 +40,7 @@
             <th>Bucket</th>
             <th>Tokens</th>
             <th class="num">Unsynced</th>
-            <th>Teardown</th>
+            <th>Delete</th>
           </tr>
         </thead>
         <tbody>
@@ -80,10 +80,10 @@
                     <div class="btn-row">
                       <input type="text" name="confirm" class="compact"
                              placeholder="type {{.Record.ProjectID}}" autocomplete="off">
-                      <button class="btn btn-sm btn-danger" type="submit">{{.NextStep}}</button>
+                      <button class="btn btn-sm btn-danger" type="submit">{{.StepLabel}}</button>
                     </div>
                     <div class="fs-sm muted" style="margin-top:5px">
-                      Irreversible — destroys the bucket and every version in it.
+                      {{.StepDetail}}
                       {{if gt .Pending 0}}
                         <div class="unsynced">{{.Pending}} unsynced write(s) will be refused until they drain.</div>
                       {{end}}
@@ -91,12 +91,12 @@
                   </form>
                 {{else}}
                   <form method="post" action="/teardown" class="inline"
-                        onsubmit="return confirm('Run {{.NextStep}} for {{.Record.ProjectID}}?')">
+                        onsubmit="return confirm('{{.StepDetail}}\n\nContinue deleting {{.Record.ProjectID}}?')">
                     <input type="hidden" name="project" value="{{.Record.ProjectID}}">
                     <input type="hidden" name="step" value="{{.NextStep}}">
-                    <button class="btn btn-sm btn-ghost" type="submit">{{.NextStep}}</button>
+                    <button class="btn btn-sm {{if eq .StepNumber 1}}btn-ghost{{else}}btn-danger{{end}}" type="submit">{{.StepLabel}}</button>
                   </form>
-                  <div class="fs-sm subtle" style="margin-top:4px">next of 4 steps</div>
+                  <div class="fs-sm subtle" style="margin-top:4px">{{.StepDetail}}</div>
                 {{end}}
               {{else if $.CanProv}}
                 <span class="subtle">—</span>

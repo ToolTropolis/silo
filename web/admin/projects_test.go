@@ -211,3 +211,59 @@ func TestProjects_UnknownUnsyncedWhenNoDaemon(t *testing.T) {
 		t.Error("unsynced counts must render as unknown when no daemon is reachable")
 	}
 }
+
+// The raw step names are internal layer names, and they mislead at exactly the
+// wrong moment: someone deleting a project sees "revoke-credential", which
+// reads like rotating a key rather than the first step of destroying
+// everything.
+func TestProjects_DeleteStepsAreDescribedInPlainTerms(t *testing.T) {
+	fp := &fakeProvisioner{plan: []TeardownStep{{Name: "revoke-credential"}}}
+	ts := newFixture(t, Config{
+		Registry: activeProject("proj-11"),
+		Settings: newFakeSettings(nil),
+		Prov:     fp,
+	})
+
+	body := getBody(t, ts, "/projects")
+
+	if !strings.Contains(body, "Start deleting") {
+		t.Error("the first step should say what it starts, not name an internal layer")
+	}
+	if !strings.Contains(body, "Step 1 of 4") {
+		t.Error("the operator should see where they are in the sequence")
+	}
+	if !strings.Contains(body, "Agents lose access immediately") {
+		t.Error("the caption should say what the step actually does")
+	}
+	if !strings.Contains(body, "<th>Delete</th>") {
+		t.Error(`the column should be labelled "Delete", not "Teardown"`)
+	}
+}
+
+func TestDescribeStep(t *testing.T) {
+	tests := []struct {
+		step, wantLabel string
+		wantNumber      int
+	}{
+		{"revoke-credential", "Start deleting", 1},
+		{"revoke-key", "Continue deleting", 2},
+		{"delete-bucket", "Delete all memory", 3},
+		{"deregister", "Finish deleting", 4},
+	}
+	for _, tc := range tests {
+		label, detail, number := describeStep(tc.step)
+		if label != tc.wantLabel {
+			t.Errorf("describeStep(%q) label = %q, want %q", tc.step, label, tc.wantLabel)
+		}
+		if number != tc.wantNumber {
+			t.Errorf("describeStep(%q) number = %d, want %d", tc.step, number, tc.wantNumber)
+		}
+		if detail == "" {
+			t.Errorf("describeStep(%q) has no detail; the operator needs to know what it destroys", tc.step)
+		}
+	}
+	// An unknown step falls back to its own name rather than rendering blank.
+	if label, _, _ := describeStep("something-else"); label != "something-else" {
+		t.Errorf("an unknown step should fall back to its name, got %q", label)
+	}
+}
