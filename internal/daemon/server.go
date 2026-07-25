@@ -144,6 +144,17 @@ type readResponse struct {
 	Content []byte `json:"content"`
 }
 
+// writeResponse tells the caller whether the write is actually safe.
+//
+// Durable is the field that matters: false means the content is buffered on the
+// daemon's local disk and has not reached the versioned backend yet. Callers
+// must NOT retry a queued write — it is already enqueued, and retrying just
+// buffers a duplicate.
+type writeResponse struct {
+	Status  string `json:"status"`
+	Durable bool   `json:"durable"`
+}
+
 type listResponse struct {
 	Paths []string `json:"paths"`
 }
@@ -199,13 +210,24 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		actor = s.actor
 	}
 	content := req.Content
-	err = s.daemon.SafeWrite(r.Context(), projectID, req.Path,
+	outcome, err := s.daemon.SafeWrite(r.Context(), projectID, req.Path,
 		func([]byte) []byte { return content }, actor, req.SessionID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	// 202 for a write that only reached local disk. It is a success — the write
+	// was accepted and will be replayed — but a caller that cannot tell the
+	// difference will report data as safe when it is one disk failure from gone.
+	if outcome == WriteQueued {
+		writeJSON(w, http.StatusAccepted, writeResponse{
+			Status:  "queued",
+			Durable: false,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, writeResponse{Status: "ok", Durable: true})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {

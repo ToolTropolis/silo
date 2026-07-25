@@ -14,7 +14,7 @@ import (
 func queueWrite(t *testing.T, d *Daemon, be *mapBackend, projectID, path string) {
 	t.Helper()
 	be.setDown(true)
-	if err := d.SafeWrite(context.Background(), projectID, path,
+	if _, err := d.SafeWrite(context.Background(), projectID, path,
 		func([]byte) []byte { return []byte(path) }, "agent", "s1"); err != nil {
 		t.Fatalf("queueing %s: %v", path, err)
 	}
@@ -215,7 +215,7 @@ func TestSyncWorker_ConcurrentWritesDuringDrain(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 5 {
-			_ = d.SafeWrite(ctx, proj, "memory/live"+string(rune('a'+i))+".md",
+			_, _ = d.SafeWrite(ctx, proj, "memory/live"+string(rune('a'+i))+".md",
 				func([]byte) []byte { return []byte("live") }, "agent", "s2")
 		}
 	}()

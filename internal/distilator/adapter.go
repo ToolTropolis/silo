@@ -2,6 +2,7 @@ package distilator
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/tooltropolis/silo/internal/daemon"
 )
@@ -32,5 +33,16 @@ func (s *DaemonStore) Read(ctx context.Context, projectID, path string) ([]byte,
 // there's no reason to bypass the CAS path.
 func (s *DaemonStore) Write(ctx context.Context, projectID, path string, content []byte, actor, sessionID string) error {
 	body := content
-	return s.d.SafeWrite(ctx, projectID, path, func([]byte) []byte { return body }, actor, sessionID)
+	outcome, err := s.d.SafeWrite(ctx, projectID, path, func([]byte) []byte { return body }, actor, sessionID)
+	if err != nil {
+		return err
+	}
+	// A queued write is a success for an agent — it will be replayed — but not
+	// for promotion. A human approved this specific content, and reporting
+	// "promoted" for something sitting on local disk would let them believe a
+	// reviewed change had landed when it has not.
+	if outcome == daemon.WriteQueued {
+		return fmt.Errorf("distilator: %q was queued locally, not written: the backend is unreachable", path)
+	}
+	return nil
 }

@@ -32,7 +32,18 @@ func (d *Daemon) SyncProject(ctx context.Context, projectID string) error {
 
 	for i, w := range pending {
 		content := w.Content // capture for the closure
-		err := d.SafeWrite(ctx, projectID, w.Path, func([]byte) []byte { return content }, w.Actor, w.SessionID)
+		outcome, err := d.SafeWrite(ctx, projectID, w.Path, func([]byte) []byte { return content }, w.Actor, w.SessionID)
+		// A replay that queues instead of landing means the backend died mid-drain.
+		// SafeWrite has already put that write back on the queue, so treat it as a
+		// failure and stop — re-enqueueing below would buffer it a second time.
+		if err == nil && outcome == WriteQueued {
+			for _, rem := range pending[i+1:] {
+				if reErr := d.cache.Enqueue(ctx, projectID, rem); reErr != nil {
+					return fmt.Errorf("daemon: sync %q: backend went away mid-drain and re-enqueue failed: %w", projectID, reErr)
+				}
+			}
+			return fmt.Errorf("daemon: sync %q: backend went away while replaying %q", projectID, w.Path)
+		}
 		if err != nil {
 			// Re-enqueue this write and every write after it, preserving order,
 			// so a mid-drain failure never drops buffered writes.
