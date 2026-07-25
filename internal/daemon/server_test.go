@@ -168,3 +168,65 @@ func TestHandleQueue_ReportsOwnProjectOnly(t *testing.T) {
 		t.Errorf("?project=proj-a with proj-b's token returned %+v — the token must decide the project", got)
 	}
 }
+
+// TestHandleSync_DrainsOnDemand: the flush path an operator uses before a
+// shutdown or a teardown, when waiting for the next tick is not acceptable.
+func TestHandleSync_DrainsOnDemand(t *testing.T) {
+	be := &fakeBackend{getErr: errors.New("connection refused")}
+	c, err := cache.NewBoltCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	d := New(be, c, nil, nil)
+	s := NewServer(d, StaticTokenVerifier{"tok-a": "proj-a"})
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	// Two writes queue while the backend is down.
+	for _, p := range []string{"memory/1.md", "memory/2.md"} {
+		if _, err := d.SafeWrite(context.Background(), "proj-a", p,
+			func([]byte) []byte { return []byte("x") }, "agent", "s"); err != nil {
+			t.Fatalf("queueing: %v", err)
+		}
+	}
+
+	postSync := func() syncResponse {
+		t.Helper()
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/sync", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer tok-a")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("POST /v1/sync: %v", err)
+		}
+		defer resp.Body.Close()
+		var out syncResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	// Backend still down: nothing drains, and nothing may be lost.
+	if got := postSync(); got.Remaining != 2 || got.Drained != 0 {
+		t.Errorf("with the backend down: drained=%d remaining=%d, want 0 and 2",
+			got.Drained, got.Remaining)
+	}
+	if got := postSync(); got.Error == "" {
+		t.Error("a failed drain should report why")
+	}
+
+	// Backend recovers: the flush drains everything.
+	be.getErr = nil
+	got := postSync()
+	if got.Drained != 2 || got.Remaining != 0 {
+		t.Errorf("after recovery: drained=%d remaining=%d, want 2 and 0", got.Drained, got.Remaining)
+	}
+	if got.Error != "" {
+		t.Errorf("a successful drain should report no error, got %q", got.Error)
+	}
+}
