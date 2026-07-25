@@ -107,7 +107,12 @@ func (c *daemonClient) do(ctx context.Context, method, path string, query url.Va
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// Any 2xx is a success. The daemon returns 202 for a write it buffered
+	// locally because the backend was unreachable — that write was accepted and
+	// will be replayed, so treating it as an error would turn a degraded-but-
+	// working path into a hard failure, and callers would retry a write that is
+	// already queued.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return decodeError(resp)
 	}
 	if out != nil {

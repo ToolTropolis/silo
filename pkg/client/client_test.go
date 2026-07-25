@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -181,5 +182,51 @@ func TestClient_RequiresEndpointAndToken(t *testing.T) {
 	}
 	if _, err := client.New(client.Config{Endpoint: "http://x"}); err == nil {
 		t.Fatal("missing token should error")
+	}
+}
+
+// TestDo_AcceptsAll2xx guards the compatibility window for the 202 change.
+//
+// The daemon returns 202 for a write it buffered locally. If the SDK treated
+// that as an error, an old client against a new daemon would report every
+// offline write as a hard failure and retry it — turning silent data loss into
+// loud duplicate-queueing. This must land before the daemon starts sending 202.
+func TestDo_AcceptsAll2xx(t *testing.T) {
+	for _, code := range []int{http.StatusOK, http.StatusAccepted, http.StatusNoContent} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+
+		c, err := client.New(client.Config{Endpoint: srv.URL, Token: "t"})
+		if err != nil {
+			srv.Close()
+			t.Fatalf("New: %v", err)
+		}
+		if err := c.Write(context.Background(), "memory/x.md", []byte("hi")); err != nil {
+			t.Errorf("status %d should be treated as success, got %v", code, err)
+		}
+		srv.Close()
+	}
+}
+
+// Non-2xx must still be an error — widening to 2xx should not swallow failures.
+func TestDo_RejectsNon2xx(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusInternalServerError} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(`{"error":"nope"}`))
+		}))
+
+		c, err := client.New(client.Config{Endpoint: srv.URL, Token: "t"})
+		if err != nil {
+			srv.Close()
+			t.Fatalf("New: %v", err)
+		}
+		if err := c.Write(context.Background(), "memory/x.md", []byte("hi")); err == nil {
+			t.Errorf("status %d should be an error", code)
+		}
+		srv.Close()
 	}
 }
