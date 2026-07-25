@@ -110,3 +110,61 @@ func TestHandleWrite_RejectsUnknownToken(t *testing.T) {
 		t.Errorf("status = %d, want 401", code)
 	}
 }
+
+// TestHandleQueue_ReportsOwnProjectOnly is the isolation guarantee for the new
+// endpoint: the project comes from the token, and no request parameter can
+// redirect it at someone else's silo.
+func TestHandleQueue_ReportsOwnProjectOnly(t *testing.T) {
+	be := &fakeBackend{getErr: errors.New("connection refused")}
+	c, err := cache.NewBoltCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	d := New(be, c, nil, nil)
+	s := NewServer(d, StaticTokenVerifier{"tok-a": "proj-a", "tok-b": "proj-b"})
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	// Queue two writes for proj-a only.
+	for _, p := range []string{"memory/1.md", "memory/2.md"} {
+		if _, err := d.SafeWrite(context.Background(), "proj-a", p,
+			func([]byte) []byte { return []byte("x") }, "agent", "s"); err != nil {
+			t.Fatalf("queueing: %v", err)
+		}
+	}
+
+	get := func(token, query string) queueResponse {
+		t.Helper()
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/queue"+query, nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET /v1/queue: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var out queueResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	if got := get("tok-a", ""); got.Project != "proj-a" || got.Pending != 2 {
+		t.Errorf("proj-a queue = %+v, want project proj-a with 2 pending", got)
+	}
+	if got := get("tok-b", ""); got.Project != "proj-b" || got.Pending != 0 {
+		t.Errorf("proj-b queue = %+v, want project proj-b with 0 pending", got)
+	}
+	// A project parameter must not redirect the answer.
+	if got := get("tok-b", "?project=proj-a"); got.Project != "proj-b" || got.Pending != 0 {
+		t.Errorf("?project=proj-a with proj-b's token returned %+v — the token must decide the project", got)
+	}
+}

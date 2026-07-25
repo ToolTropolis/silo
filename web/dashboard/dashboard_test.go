@@ -77,8 +77,13 @@ func (f *fakeReviewer) Promote(_ context.Context, _, _ string, approved []string
 }
 
 func newTestServer(t *testing.T, reg Registry, mem MemoryReader, rev ProposalReviewer) *httptest.Server {
+	return newTestServerWithQueues(t, reg, mem, rev, nil)
+}
+
+// newTestServerWithQueues builds a dashboard with a QueueReader wired in.
+func newTestServerWithQueues(t *testing.T, reg Registry, mem MemoryReader, rev ProposalReviewer, q QueueReader) *httptest.Server {
 	t.Helper()
-	s, err := NewServer(reg, mem, rev)
+	s, err := NewServer(reg, mem, rev, q)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -360,5 +365,60 @@ func TestServesBrandAssets(t *testing.T) {
 		if len(body) == 0 {
 			t.Errorf("%s: empty body", tc.path)
 		}
+	}
+}
+
+// stubQueues reports a fixed depth per project.
+type stubQueues struct {
+	depths map[string]int
+	err    error
+}
+
+func (s stubQueues) QueueDepth(_ context.Context, projectID string) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.depths[projectID], nil
+}
+
+// TestRegistry_ShowsUnsyncedWrites: an operator must be able to see, at a
+// glance, that a project is holding memory that never reached the backend.
+func TestRegistry_ShowsUnsyncedWrites(t *testing.T) {
+	reg := &fakeRegistry{records: []registry.ProjectRecord{
+		{ProjectID: "proj-a", Status: registry.StatusActive, BucketName: "silo-proj-a"},
+		{ProjectID: "proj-b", Status: registry.StatusActive, BucketName: "silo-proj-b"},
+	}}
+	q := stubQueues{depths: map[string]int{"proj-a": 7}}
+
+	srv := newTestServerWithQueues(t, reg, nil, nil, q)
+	code, body := get(t, srv, "/")
+	if code != 200 {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if !strings.Contains(body, "Unsynced") {
+		t.Error("registry view should have an Unsynced column")
+	}
+	// The at-risk project is emphasised rather than rendered as plain metadata.
+	if !strings.Contains(body, `class="unsynced">7<`) {
+		t.Error("a project with 7 unsynced writes should be emphasised")
+	}
+	if !strings.Contains(body, `class="meta">0<`) {
+		t.Error("a project with nothing pending should render an unremarkable 0")
+	}
+}
+
+// Without a QueueReader the column must read "?" — "nothing pending" and
+// "nobody checked" must never look the same.
+func TestRegistry_UnsyncedUnknownWithoutQueueReader(t *testing.T) {
+	reg := &fakeRegistry{records: []registry.ProjectRecord{
+		{ProjectID: "proj-a", Status: registry.StatusActive, BucketName: "silo-proj-a"},
+	}}
+	srv := newTestServer(t, reg, nil, nil) // no QueueReader
+	code, body := get(t, srv, "/")
+	if code != 200 {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if !strings.Contains(body, `>?<`) {
+		t.Error("unsynced count should render as ? when no QueueReader is configured")
 	}
 }

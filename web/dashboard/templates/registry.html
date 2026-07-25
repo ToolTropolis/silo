@@ -8,7 +8,7 @@ show <strong>references</strong>, never secrets. Teardown runs only via
 <table>
   <thead>
     <tr><th>Project</th><th>Status</th><th>Bucket</th><th>Credential ref</th>
-        <th>Key ref</th><th>Created</th><th>Next step</th></tr>
+        <th>Key ref</th><th>Created</th><th>Unsynced</th><th>Next step</th></tr>
   </thead>
   <tbody>
   {{range .Projects}}
@@ -19,6 +19,7 @@ show <strong>references</strong>, never secrets. Teardown runs only via
       <td class="mono ref">{{truncate 22 .CredentialID}}</td>
       <td class="mono ref">{{truncate 22 .KeyID}}</td>
       <td class="meta">{{.CreatedAt}}</td>
+      <td class="{{.UnsyncedClass}}">{{.Unsynced}}</td>
       <td class="meta">{{.NextStep}}</td>
     </tr>
   {{end}}
