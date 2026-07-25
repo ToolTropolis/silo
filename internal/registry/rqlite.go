@@ -14,6 +14,11 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// ledgerMigration creates schema_migrations itself, so it is applied before the
+// ledger can be consulted. Every migration ordered at or before it predates the
+// ledger and is backfilled as already-applied on first run.
+const ledgerMigration = "003_schema_migrations.sql"
+
 // Rqlite is the default TenantRegistry, backed by a 3-node rqlite cluster
 // (SQLite semantics + Raft HA). gorqlite follows leader redirects
 // automatically, so pointing it at every node's address lets reads and writes
@@ -70,7 +75,17 @@ func (r *Rqlite) ensureSchema(ctx context.Context) error {
 	}
 	sort.Strings(names) // apply in filename order (001_, 002_, ...)
 
+	// The ledger has to exist before it can be consulted, so it is applied
+	// unconditionally. It is CREATE TABLE IF NOT EXISTS, so that is safe.
+	applied, err := r.appliedMigrations(ctx, names)
+	if err != nil {
+		return err
+	}
+
 	for _, name := range names {
+		if _, done := applied[name]; done {
+			continue
+		}
 		content, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return fmt.Errorf("registry: read migration %s: %w", name, err)
@@ -82,6 +97,66 @@ func (r *Rqlite) ensureSchema(ctx context.Context) error {
 				return fmt.Errorf("registry: apply %s: %w", name, err)
 			}
 		}
+		if err := r.recordMigration(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// appliedMigrations returns the set of migrations already recorded as applied.
+//
+// It first applies the ledger migration itself, then backfills every migration
+// that predates the ledger. Those are all CREATE TABLE IF NOT EXISTS, so they
+// have already run harmlessly against any existing cluster — recording them
+// keeps the ledger honest rather than claiming they never ran.
+func (r *Rqlite) appliedMigrations(ctx context.Context, all []string) (map[string]struct{}, error) {
+	ledger, err := migrationsFS.ReadFile("migrations/" + ledgerMigration)
+	if err != nil {
+		return nil, fmt.Errorf("registry: read %s: %w", ledgerMigration, err)
+	}
+	for _, stmt := range splitStatements(string(ledger)) {
+		if _, err := r.conn.WriteOneContext(ctx, stmt); err != nil {
+			return nil, fmt.Errorf("registry: apply %s: %w", ledgerMigration, err)
+		}
+	}
+
+	rows, err := r.conn.QueryOneContext(ctx, `SELECT name FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("registry: read schema_migrations: %w", err)
+	}
+	applied := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("registry: scan schema_migrations: %w", err)
+		}
+		applied[name] = struct{}{}
+	}
+
+	// First run against a pre-ledger cluster: everything up to and including the
+	// ledger has effectively already been applied.
+	if len(applied) == 0 {
+		for _, name := range all {
+			if name > ledgerMigration {
+				break // ordered, so anything after the ledger is genuinely new
+			}
+			if err := r.recordMigration(ctx, name); err != nil {
+				return nil, err
+			}
+			applied[name] = struct{}{}
+		}
+	}
+	return applied, nil
+}
+
+func (r *Rqlite) recordMigration(ctx context.Context, name string) error {
+	_, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     `INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)`,
+		Arguments: []interface{}{name, time.Now().UTC().Format(time.RFC3339)},
+	})
+	if err != nil {
+		return fmt.Errorf("registry: record migration %s: %w", name, err)
 	}
 	return nil
 }
