@@ -171,6 +171,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/projects", s.handleProjects)
 	s.mux.HandleFunc("/project", s.handleProject)
 	s.mux.HandleFunc("/browse", s.handleBrowse)
+	s.mux.HandleFunc("/lookup", s.handleLookup)
 	s.mux.HandleFunc("/tokens/mint", s.handleMintToken)
 	s.mux.HandleFunc("/tokens/revoke", s.handleRevokeToken)
 	// The wizard owns /onboard/*; the bare /onboard stays a plain POST so the
@@ -244,6 +245,7 @@ var viewTitles = map[string]string{
 	"projects.html":       "Projects",
 	"project.html":        "Project",
 	"browse.html":         "Find a repository",
+	"lookup.html":         "Match the folder",
 	"wizard_name.html":    "Onboard a project",
 	"wizard_checks.html":  "Onboard — checks",
 	"wizard_review.html":  "Onboard — review",
@@ -255,7 +257,7 @@ var viewTitles = map[string]string{
 
 // contentViews are every page rendered inside the app shell.
 var contentViews = []string{
-	"cache.html", "settings.html", "projects.html", "project.html", "browse.html",
+	"cache.html", "settings.html", "projects.html", "project.html", "browse.html", "lookup.html",
 	"wizard_name.html", "wizard_checks.html", "wizard_review.html", "wizard_connect.html",
 	"wizard_status.html", "wizard_done.html",
 }

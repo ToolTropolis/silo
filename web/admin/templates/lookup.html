@@ -1,0 +1,61 @@
+{{define "body"}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Which <code class="id">{{.Name}}</code>?</h2>
+      <p class="hint">
+        Your browser gives a page the folder's name but never its location, so
+        Silo looked it up on this machine.
+      </p>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="/browse">Browse instead</a>
+  </div>
+
+  {{if .Problem}}
+  <div class="card-body">
+    <div class="notice warn" style="margin:0">
+      <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+      <div class="n-body">
+        {{.Problem}}
+      </div>
+    </div>
+  </div>
+  <div class="card-foot">
+    <a class="btn" href="/browse">Browse for it</a>
+    <a class="btn btn-ghost" href="/onboard/name">Type the path</a>
+  </div>
+  {{else}}
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Path</th><th></th><th></th></tr>
+        </thead>
+        <tbody>
+        {{range .Matches}}
+          <tr>
+            <td class="mono fs-sm">{{.Path}}</td>
+            <td>{{if .IsRepo}}<span class="badge ok"><span class="dot"></span>git repo</span>{{end}}</td>
+            <td class="actions">
+              <a class="btn btn-sm {{if .IsRepo}}btn-primary{{else}}btn-ghost{{end}}"
+                 href="/onboard/name?repo={{.Path}}">Use this</a>
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-foot">
+    <span class="fs-sm muted">
+      {{if .Truncated}}
+        Showing the first matches only — the search stopped early. Browse if the one you
+        want is missing.
+      {{else}}
+        Repositories are listed first.
+      {{end}}
+    </span>
+  </div>
+  {{end}}
+</div>
+{{end}}

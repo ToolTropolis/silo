@@ -19,7 +19,11 @@
                      placeholder="/Users/you/code/myrepo   or   https://github.com/org/repo.git"
                      autocomplete="off" spellcheck="false" autofocus>
               <button class="btn" type="submit">Look up</button>
-              <a class="btn btn-ghost" href="/browse" title="Browse directories on this machine">Browse…</a>
+              {{/* Progressively enhanced: without JS this is a plain link to the
+                   server-side browser, which always works. With JS it opens the
+                   real OS folder dialog instead. */}}
+              <a class="btn btn-ghost" id="browse-link" href="/browse"
+                 title="Browse directories on this machine">Browse…</a>
             </div>
             {{with .Repo}}
               {{if .Problem}}<p class="err">{{.Problem}}</p>{{end}}
@@ -116,4 +120,39 @@
     </form>
   </div>
 </div>
+{{/* The native folder dialog hands a page the folder's NAME but never its
+     path — MDN: "the absolute path of the chosen directory is never exposed
+     to the page". So the picker supplies the name and the server resolves it
+     to a real path. Everything below is an enhancement: with scripting off,
+     the Browse… link still reaches the server-side browser. */}}
+<input type="file" id="native-dir" webkitdirectory hidden>
+<form method="get" action="/lookup" id="lookup-form" hidden>
+  <input type="hidden" name="name" id="lookup-name">
+</form>
+<script>
+(function () {
+  var input = document.getElementById("native-dir");
+  var link  = document.getElementById("browse-link");
+  if (!input || !link) return;
+  // Only take over the link when the browser actually supports directory
+  // selection; otherwise leave it pointing at the server-side browser.
+  if (!("webkitdirectory" in input)) return;
+
+  link.addEventListener("click", function (e) {
+    e.preventDefault();
+    input.click();
+  });
+  link.title = "Pick a folder with your system dialog";
+
+  input.addEventListener("change", function () {
+    var files = input.files;
+    if (!files || !files.length) return;           // dialog cancelled
+    var leaf = (files[0].webkitRelativePath || "").split("/")[0];
+    if (!leaf) return;
+    document.getElementById("lookup-name").value = leaf;
+    document.getElementById("lookup-form").submit();
+  });
+})();
+</script>
+
 {{end}}
