@@ -49,6 +49,8 @@ func run(args []string) error {
 	cacheMaxBytes := fs.Int64("cache-max-bytes", 0, "cap cached bytes per project (0 = unlimited)")
 	evictInterval := fs.Duration("evict-interval", daemon.DefaultEvictInterval, "how often to apply the cache retention policy")
 	cacheConfigSource := fs.String("cache-config-source", "registry", "where cache retention policy comes from: \"registry\" (per-project, then fleet default, then these flags) or \"flags\" (pin this host to its flags, ignoring the console)")
+	tokenCacheTTL := fs.Duration("token-cache-ttl", daemon.DefaultTokenCacheTTL,
+		"how long a verified agent token stays cached. This is the window in which a revoked token still works, so shorter is safer and costs more registry reads")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,12 +68,19 @@ func run(args []string) error {
 		}
 	}
 
-	if *tokens == "" {
-		return fmt.Errorf("--tokens is required: at least one token=projectID pair scoping SDK access")
-	}
-	verifier, err := parseTokens(*tokens)
-	if err != nil {
-		return err
+	// --tokens is optional once the registry can issue them: a daemon with a
+	// registry serves every token minted for a project without a restart, which
+	// is the point of moving tokens out of a startup flag. Requiring both would
+	// mean every new project still needed a redeploy.
+	var static daemon.StaticTokenVerifier
+	if *tokens != "" {
+		var err error
+		if static, err = parseTokens(*tokens); err != nil {
+			return err
+		}
+	} else if *rqliteAddrs == "" {
+		return fmt.Errorf("no way to authorize agents: pass --tokens, or --rqlite so " +
+			"tokens minted at onboarding can be verified")
 	}
 
 	be, err := backend.NewSeaweedFS(backend.Config{
@@ -105,6 +114,15 @@ func run(args []string) error {
 		fmt.Println("silod: WARNING no --rqlite configured; cache ownership cannot be verified")
 	}
 
+	// Authorization: registry-issued tokens when a token store is available,
+	// with --tokens still honoured. Static tokens are checked first and never
+	// need the registry, so the dev flow keeps working during an outage.
+	var verifier daemon.TokenVerifier = static
+	if store, ok := reg.(registry.TokenStore); ok {
+		verifier = daemon.NewRegistryTokenVerifier(store, static, *tokenCacheTTL)
+		fmt.Printf("silod: verifying agent tokens against the registry (cache %s)\n", *tokenCacheTTL)
+	}
+
 	// KMS isn't needed for the SDK read/write surface; it's wired in as the
 	// daemon takes on onboarding-aware behavior.
 	d := daemon.New(be, localCache, reg, nil)
@@ -123,7 +141,7 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	projects := syncProjects(context.Background(), reg, verifier)
+	projects := syncProjects(context.Background(), reg, static)
 	worker := daemon.NewSyncWorker(d, projects, *syncInterval, func(format string, args ...any) {
 		fmt.Printf(format+"\n", args...)
 	})
@@ -205,8 +223,10 @@ func run(args []string) error {
 		fmt.Printf("silod: admin socket at %s\n", *adminListen)
 	}
 
-	fmt.Printf("silod: listening on %s (%d token(s), %d project(s), syncing every %s)\n",
-		*listen, len(verifier), len(projects), *syncInterval)
+	// Counts the flag-configured tokens only: registry-issued ones are resolved
+	// on demand, so there is no fixed number to report.
+	fmt.Printf("silod: listening on %s (%d static token(s), %d project(s), syncing every %s)\n",
+		*listen, len(static), len(projects), *syncInterval)
 
 	select {
 	case err := <-serveErr:
