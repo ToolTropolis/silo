@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 )
@@ -183,16 +184,56 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 // bind actually succeeded. Printing before the bind makes a port conflict look
 // like a successful start, and the next symptom — every request failing
 // against whatever process already owns the port — is baffling.
-func (s *Server) Listen(addr string) (net.Listener, error) {
+func (s *Server) Listen(addr string) (net.Listener, error) { return Listen(addr) }
+
+// Listen binds addr, treating a colon-free value as a Unix socket path.
+//
+// Shared by the agent-facing and admin listeners so the socket-vs-TCP rule is
+// stated once. A stale socket file is removed first: bind fails with "address
+// already in use" otherwise, which after an unclean shutdown looks exactly like
+// a port conflict and sends you looking in the wrong place.
+func Listen(addr string) (net.Listener, error) {
 	network := "tcp"
 	if !strings.Contains(addr, ":") {
 		network = "unix"
+		if err := removeStaleSocket(addr); err != nil {
+			return nil, err
+		}
 	}
 	ln, err := net.Listen(network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("daemon: listen %s %s: %w", network, addr, err)
 	}
+	if network == "unix" {
+		// The socket is the authorization boundary for the admin surface, so it
+		// must not be world-accessible.
+		if err := os.Chmod(addr, 0o700); err != nil {
+			_ = ln.Close()
+			return nil, fmt.Errorf("daemon: secure socket %s: %w", addr, err)
+		}
+	}
 	return ln, nil
+}
+
+// removeStaleSocket clears a socket file left behind by an unclean exit, but
+// only if nothing is listening on it — removing a live one would silently
+// detach a running daemon from its listener.
+func removeStaleSocket(path string) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("daemon: stat %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("daemon: %s exists and is not a socket", path)
+	}
+	if conn, err := net.Dial("unix", path); err == nil {
+		_ = conn.Close()
+		return fmt.Errorf("daemon: %s is already in use by a running process", path)
+	}
+	return os.Remove(path)
 }
 
 // Serve handles requests on an already-bound listener.

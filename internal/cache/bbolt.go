@@ -188,6 +188,47 @@ func (c *BoltCache) BindProject(ctx context.Context, projectID, generation strin
 	return nil
 }
 
+// PurgeProject closes a project's cache handle and removes its file.
+//
+// Removing the file rather than emptying the buckets is deliberate: bbolt frees
+// pages for reuse but never shrinks a file, so clearing the buckets would leave
+// the disk usage exactly where it was. It also means a torn-down project leaves
+// nothing behind at all, rather than an empty file holding its old name.
+//
+// Off the LocalCache interface, unlike BindProject: this is an operator action,
+// not a per-request contract, so a cache that cannot purge should surface a
+// clear error rather than fail to compile.
+//
+// Purging a project that has no cache file is not an error — teardown should be
+// able to run whether or not this host ever served that project.
+func (c *BoltCache) PurgeProject(ctx context.Context, projectID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Validate before the ID reaches filepath.Join: this function deletes files,
+	// so an unchecked "../something" here would be considerably worse than a
+	// stray read.
+	if err := project.ValidateID(projectID); err != nil {
+		return fmt.Errorf("cache: %w", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if pdb, ok := c.dbs[projectID]; ok {
+		if err := pdb.db.Close(); err != nil {
+			return fmt.Errorf("cache: purge %q: close handle: %w", projectID, err)
+		}
+		delete(c.dbs, projectID)
+	}
+
+	path := filepath.Join(c.baseDir, projectID+".bbolt")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cache: purge %q: %w", projectID, err)
+	}
+	return nil
+}
+
 // Close releases every open bbolt handle. Safe to call once at shutdown.
 func (c *BoltCache) Close() error {
 	c.mu.Lock()

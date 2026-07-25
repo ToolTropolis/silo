@@ -38,6 +38,20 @@ type Onboarder struct {
 	KMS      kms.KeyManager
 	Backend  backend.DurableBackend
 	Creds    CredentialIssuer
+	// Cache removes a project's local cache during teardown. Optional: a nil
+	// purger warns rather than failing, so teardown still works on a host with
+	// no daemon running — but the operator is told the local copy remains.
+	Cache CachePurger
+}
+
+// CachePurger drops a project's local cache file.
+//
+// Teardown destroys the bucket, the key, and the registry record, but the cache
+// lives on a daemon's disk and is only reachable through that daemon — siloctl
+// must not open bbolt itself, since a second process contending for the lock
+// would hang both.
+type CachePurger interface {
+	PurgeCache(ctx context.Context, projectID string) error
 }
 
 // bucketName derives a project's bucket. Kept consistent with the backend

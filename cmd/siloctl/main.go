@@ -9,7 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -293,6 +295,7 @@ func runTeardown(args []string) error {
 	stepName := fs.String("step", "", "one of: revoke-credential, revoke-key, delete-bucket, deregister (required)")
 	daemonAddr := fs.String("daemon", os.Getenv("SILO_DAEMON_ADDR"), "daemon address, to check for unsynced writes before deleting a bucket (or SILO_DAEMON_ADDR)")
 	daemonTokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs for the daemon check (or SILO_TOKENS)")
+	adminSocket := fs.String("admin-socket", os.Getenv("SILO_ADMIN_SOCKET"), "daemon admin socket, used to purge the local cache when the bucket is deleted (or SILO_ADMIN_SOCKET)")
 	assumeYes := fs.Bool("yes", false, "skip the interactive prompt (for scripted use); still one step per invocation")
 	backendEndpoint := fs.String("backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
 	backendRegion := fs.String("backend-region", "us-east-1", "S3 region (SeaweedFS ignores it)")
@@ -398,6 +401,9 @@ func runTeardown(args []string) error {
 	}, km)
 
 	o := &admin.Onboarder{Registry: reg, KMS: km, Backend: be, Creds: creds}
+	if *adminSocket != "" {
+		o.Cache = newDaemonCachePurger(*adminSocket)
+	}
 	if err := o.Teardown(ctx, *project, step); err != nil {
 		return err
 	}
@@ -626,4 +632,61 @@ func queueDepthFor(ctx context.Context, addr, token string) int {
 		return -1
 	}
 	return body.Pending
+}
+
+// daemonCachePurger asks a daemon to drop a project's local cache over its
+// admin socket.
+//
+// siloctl never opens the bbolt files itself: the daemon holds an exclusive
+// lock on them, so a second process would block for five seconds and then fail
+// with a timeout that looks nothing like its actual cause.
+type daemonCachePurger struct {
+	socket string
+	client *http.Client
+}
+
+// newDaemonCachePurger dials the daemon's admin socket. A path with no colon is
+// a Unix socket, matching the daemon's own listener rule.
+func newDaemonCachePurger(socket string) *daemonCachePurger {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		},
+	}
+	return &daemonCachePurger{
+		socket: socket,
+		client: &http.Client{Transport: transport, Timeout: 15 * time.Second},
+	}
+}
+
+func (p *daemonCachePurger) PurgeCache(ctx context.Context, projectID string) error {
+	url := "http://silod/v1/admin/purge-cache?project=" + urlpkg.QueryEscape(projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("contact daemon at %s: %w", p.socket, err)
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Purged  bool   `json:"purged"`
+		Pending int    `json:"pending"`
+		Error   string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+
+	switch {
+	case resp.StatusCode == http.StatusOK && body.Purged:
+		return nil
+	case resp.StatusCode == http.StatusConflict:
+		return fmt.Errorf("%d write(s) are still queued; drain them first with siloctl flush", body.Pending)
+	default:
+		if body.Error != "" {
+			return fmt.Errorf("daemon refused the purge: %s", body.Error)
+		}
+		return fmt.Errorf("daemon returned %d", resp.StatusCode)
+	}
 }

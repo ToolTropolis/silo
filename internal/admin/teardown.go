@@ -107,6 +107,25 @@ func (o *Onboarder) Teardown(ctx context.Context, projectID string, step Teardow
 		}
 
 	case StepDeleteBucket:
+		// Purge the local cache BEFORE destroying the bucket, not after.
+		//
+		// The daemon refuses to purge while writes are still queued, and that
+		// refusal has to stop the teardown while it can still do some good.
+		// Deleting the bucket first would leave those writes addressed to a
+		// destination that no longer exists — unsyncable, and lost whenever the
+		// cache is eventually cleared.
+		//
+		// Purging here rather than at deregister also closes the window where a
+		// project's memory sits in plaintext on local disk with nothing upstream
+		// left for it to be consistent with.
+		if o.Cache != nil {
+			if err := o.Cache.PurgeCache(ctx, projectID); err != nil {
+				return fmt.Errorf("admin: teardown %q: purge cache: %w", projectID, err)
+			}
+		} else {
+			fmt.Printf("  NOTE: no daemon configured, so %q's local cache was not purged.\n"+
+				"        Its memory remains on the daemon host until that file is removed.\n", projectID)
+		}
 		if err := o.Backend.DeleteBucket(ctx, projectID); err != nil {
 			return fmt.Errorf("admin: teardown %q: delete bucket: %w", projectID, err)
 		}
