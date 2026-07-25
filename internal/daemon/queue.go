@@ -76,6 +76,42 @@ func (d *Daemon) QueueDepth(ctx context.Context, projectID string) (int, error) 
 	return d.cache.QueueDepth(ctx, projectID)
 }
 
+// ErrQueuedWrites is returned when an operation would discard writes that have
+// not reached the durable backend yet.
+var ErrQueuedWrites = errors.New("daemon: project has unsynced writes")
+
+// projectPurger is implemented by caches that can drop a project's local store
+// entirely. Off LocalCache because it is an operator action rather than part of
+// the per-request contract.
+type projectPurger interface {
+	PurgeProject(ctx context.Context, projectID string) error
+}
+
+// PurgeCache removes a project's local cache, refusing while it still holds
+// writes that never reached the backend.
+//
+// The gate lives here rather than only in siloctl because siloctl's check is
+// advisory — it prints a note and continues when it cannot reach a daemon. This
+// is the enforced one: whatever calls it, buffered writes are not silently
+// discarded.
+func (d *Daemon) PurgeCache(ctx context.Context, projectID string) error {
+	purger, ok := d.cache.(projectPurger)
+	if !ok {
+		return fmt.Errorf("daemon: purge %q: cache does not support purging", projectID)
+	}
+
+	depth, err := d.cache.QueueDepth(ctx, projectID)
+	if err != nil {
+		// Refuse rather than guess. Purging on an unreadable queue is exactly
+		// how buffered writes would vanish unnoticed.
+		return fmt.Errorf("daemon: purge %q: cannot read queue depth: %w", projectID, err)
+	}
+	if depth > 0 {
+		return fmt.Errorf("daemon: purge %q: %d write(s) still queued: %w", projectID, depth, ErrQueuedWrites)
+	}
+	return purger.PurgeProject(ctx, projectID)
+}
+
 // oldestQueuer is implemented by caches that can report the head of the queue.
 // Kept off LocalCache: the timestamp is a reporting nicety, and the interface is
 // the contract every implementation must satisfy.

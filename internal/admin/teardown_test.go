@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tooltropolis/silo/internal/backend"
@@ -387,5 +388,109 @@ func TestTeardown_MissingProject(t *testing.T) {
 	}
 	if len(f.creds.revoked) != 0 {
 		t.Error("nothing should be revoked for an unknown project")
+	}
+}
+
+// recordingPurger captures cache-purge calls so teardown ordering can be
+// asserted.
+type recordingPurger struct {
+	purged []string
+	err    error
+}
+
+func (p *recordingPurger) PurgeCache(_ context.Context, projectID string) error {
+	if p.err != nil {
+		return p.err
+	}
+	p.purged = append(p.purged, projectID)
+	return nil
+}
+
+// TestTeardown_PurgesCacheWithTheBucket: the cached copy goes when the bucket
+// does. Deferring it to deregister would leave a project's memory in plaintext
+// on local disk through an operator-paced gap, with nothing left upstream for
+// it to be consistent with.
+func TestTeardown_PurgesCacheWithTheBucket(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning)
+	purger := &recordingPurger{}
+	o.Cache = purger
+
+	// Advance to delete-bucket.
+	if err := o.Teardown(ctx, "proj-11", StepRevokeKey); err != nil {
+		t.Fatalf("revoke-key: %v", err)
+	}
+	if len(purger.purged) != 0 {
+		t.Fatal("the cache must not be purged before the bucket is destroyed")
+	}
+
+	if err := o.Teardown(ctx, "proj-11", StepDeleteBucket); err != nil {
+		t.Fatalf("delete-bucket: %v", err)
+	}
+	if len(f.be.deleted) != 1 {
+		t.Fatalf("bucket not deleted: %v", f.be.deleted)
+	}
+	if len(purger.purged) != 1 || purger.purged[0] != "proj-11" {
+		t.Errorf("cache purged = %v, want [proj-11] alongside the bucket", purger.purged)
+	}
+}
+
+// A purge failure must stop teardown rather than be swallowed — the daemon
+// refuses while writes are queued, and that refusal is the whole point.
+func TestTeardown_PurgeFailureStopsTeardown(t *testing.T) {
+	ctx := context.Background()
+	o, _ := newTeardownFixture(registry.StatusDecommissioning)
+	o.Cache = &recordingPurger{err: errors.New("2 write(s) are still queued")}
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeKey); err != nil {
+		t.Fatalf("revoke-key: %v", err)
+	}
+	err := o.Teardown(ctx, "proj-11", StepDeleteBucket)
+	if err == nil {
+		t.Fatal("a failed cache purge must surface, not be swallowed")
+	}
+	if !strings.Contains(err.Error(), "purge cache") {
+		t.Errorf("error should name the purge, got: %v", err)
+	}
+}
+
+// TestTeardown_RefusedPurgeLeavesTheBucket is the ordering guarantee.
+//
+// The daemon refuses to purge while writes are still queued. If the bucket were
+// deleted first, those writes would be addressed to a destination that no
+// longer exists — unsyncable, and lost whenever the cache is finally cleared.
+// The refusal has to stop teardown while it can still do some good.
+func TestTeardown_RefusedPurgeLeavesTheBucket(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning)
+	o.Cache = &recordingPurger{err: errors.New("1 write(s) are still queued")}
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeKey); err != nil {
+		t.Fatalf("revoke-key: %v", err)
+	}
+	if err := o.Teardown(ctx, "proj-11", StepDeleteBucket); err == nil {
+		t.Fatal("a refused purge must stop the step")
+	}
+	if len(f.be.deleted) != 0 {
+		t.Error("the bucket must survive a refused purge, or the queued writes " +
+			"have nowhere left to sync to")
+	}
+}
+
+// Teardown must still work on a host with no daemon — it just says the local
+// copy remains rather than pretending it is gone.
+func TestTeardown_WithoutAPurgerStillCompletes(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning)
+	o.Cache = nil
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeKey); err != nil {
+		t.Fatalf("revoke-key: %v", err)
+	}
+	if err := o.Teardown(ctx, "proj-11", StepDeleteBucket); err != nil {
+		t.Fatalf("delete-bucket without a purger should still work: %v", err)
+	}
+	if len(f.be.deleted) != 1 {
+		t.Error("the bucket must still be deleted")
 	}
 }

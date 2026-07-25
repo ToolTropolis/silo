@@ -230,3 +230,85 @@ func TestHandleSync_DrainsOnDemand(t *testing.T) {
 		t.Errorf("a successful drain should report no error, got %q", got.Error)
 	}
 }
+
+// TestPurgeCache_RefusesWithQueuedWrites is the enforced gate. siloctl's own
+// check is advisory — it prints a note and continues when it cannot reach a
+// daemon — so this is the one that actually stops buffered writes being thrown
+// away with the cache that holds them.
+func TestPurgeCache_RefusesWithQueuedWrites(t *testing.T) {
+	ctx := context.Background()
+	be := &fakeBackend{getErr: errors.New("connection refused")}
+	c, err := cache.NewBoltCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	d := New(be, c, newGenRegistry(), nil)
+	const proj = "proj-a"
+
+	// A write while the backend is down leaves something queued.
+	if _, err := d.SafeWrite(ctx, proj, "memory/x.md",
+		func([]byte) []byte { return []byte("unsynced") }, "agent", "s1"); err != nil {
+		t.Fatalf("queueing write: %v", err)
+	}
+	if depth, _ := d.QueueDepth(ctx, proj); depth != 1 {
+		t.Fatalf("setup: want 1 queued write, got %d", depth)
+	}
+
+	err = d.PurgeCache(ctx, proj)
+	if !errors.Is(err, ErrQueuedWrites) {
+		t.Fatalf("purge with queued writes: want ErrQueuedWrites, got %v", err)
+	}
+	// The data must still be there — refusing is only useful if it preserves.
+	if depth, _ := d.QueueDepth(ctx, proj); depth != 1 {
+		t.Error("a refused purge must leave the queued write intact")
+	}
+
+	// Once drained, the purge proceeds.
+	be.getErr = nil
+	if err := d.SyncProject(ctx, proj); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if err := d.PurgeCache(ctx, proj); err != nil {
+		t.Errorf("purge after draining should succeed: %v", err)
+	}
+}
+
+// The HTTP surface must report the conflict distinctly, so a caller can tell
+// "you have unsynced writes" from "something broke".
+func TestAdminPurge_ConflictsWhenWritesAreQueued(t *testing.T) {
+	ctx := context.Background()
+	be := &fakeBackend{getErr: errors.New("connection refused")}
+	c, err := cache.NewBoltCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	d := New(be, c, newGenRegistry(), nil)
+
+	if _, err := d.SafeWrite(ctx, "proj-a", "memory/x.md",
+		func([]byte) []byte { return []byte("unsynced") }, "agent", "s1"); err != nil {
+		t.Fatalf("queueing write: %v", err)
+	}
+
+	admin := NewAdminServer(d, func() []string { return []string{"proj-a"} })
+	srv := httptest.NewServer(admin.Handler())
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Post(srv.URL+"/v1/admin/purge-cache?project=proj-a", "", nil)
+	if err != nil {
+		t.Fatalf("POST purge: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("status = %d, want 409 — a queued write is a conflict to resolve, not a server fault", resp.StatusCode)
+	}
+	var body struct {
+		Pending int `json:"pending"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Pending != 1 {
+		t.Errorf("pending = %d, want 1 — the caller needs to know how much is at risk", body.Pending)
+	}
+}

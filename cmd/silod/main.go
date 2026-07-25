@@ -43,6 +43,7 @@ func run(args []string) error {
 	syncInterval := fs.Duration("sync-interval", daemon.DefaultSyncInterval, "how often to replay locally-queued writes to the backend")
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests and a final queue drain on shutdown")
 	rqliteAddrs := fs.String("rqlite", os.Getenv("SILO_RQLITE_ADDRS"), "comma-separated rqlite node addresses (or SILO_RQLITE_ADDRS); optional, but required to verify cache ownership")
+	adminListen := fs.String("admin-listen", "", "operator socket for cache stats and purges (a path; empty disables it). Not token-authenticated — the socket's permissions are the boundary, so do not bind it to TCP")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -133,6 +134,20 @@ func run(args []string) error {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
 
+	// Operator surface, off the agent-facing listener. Destructive and
+	// fleet-wide operations must not be reachable with an agent's token.
+	var adminSrv *http.Server
+	if *adminListen != "" {
+		adminLn, err := daemon.Listen(*adminListen)
+		if err != nil {
+			return fmt.Errorf("admin listener: %w", err)
+		}
+		admin := daemon.NewAdminServer(d, func() []string { return projects })
+		adminSrv = &http.Server{Handler: admin.Handler()}
+		go func() { _ = adminSrv.Serve(adminLn) }()
+		fmt.Printf("silod: admin socket at %s\n", *adminListen)
+	}
+
 	fmt.Printf("silod: listening on %s (%d token(s), %d project(s), syncing every %s)\n",
 		*listen, len(verifier), len(projects), *syncInterval)
 
@@ -153,6 +168,9 @@ func run(args []string) error {
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		fmt.Printf("silod: http shutdown: %v\n", err)
+	}
+	if adminSrv != nil {
+		_ = adminSrv.Shutdown(shutdownCtx)
 	}
 
 	wg.Wait() // the ticker goroutine observes the cancelled ctx

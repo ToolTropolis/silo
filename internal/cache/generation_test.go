@@ -272,3 +272,83 @@ func TestBindProject_ConcurrentIsSafe(t *testing.T) {
 		t.Errorf("cache unusable after concurrent binds: %v", err)
 	}
 }
+
+// TestPurgeProject_RemovesTheFile: emptying the buckets would leave the disk
+// usage untouched, since bbolt never shrinks a file. Removing it is the only
+// thing that actually reclaims the space — and leaves nothing of the project.
+func TestPurgeProject_RemovesTheFile(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCache(t)
+
+	if err := c.BindProject(ctx, testProject, genA); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if err := c.Put(ctx, testProject, "memory/x.md", []byte("content")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	path := filepath.Join(c.baseDir, testProject+".bbolt")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("setup: cache file should exist: %v", err)
+	}
+
+	if err := c.PurgeProject(ctx, testProject); err != nil {
+		t.Fatalf("PurgeProject: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("cache file should be gone, stat gave %v", err)
+	}
+
+	// The cache must still be usable afterwards — the handle was closed and
+	// dropped, so this reopens cleanly rather than using a stale one.
+	if err := c.BindProject(ctx, testProject, genA); err != nil {
+		t.Fatalf("cache unusable after purge: %v", err)
+	}
+	if _, err := c.Get(ctx, testProject, "memory/x.md"); !errors.Is(err, ErrNotFound) {
+		t.Error("purged content must not come back")
+	}
+}
+
+// Teardown should run whether or not this host ever served the project.
+func TestPurgeProject_AbsentFileIsNotAnError(t *testing.T) {
+	c := newTestCache(t)
+	if err := c.PurgeProject(context.Background(), "never-seen"); err != nil {
+		t.Errorf("purging an unknown project should be a no-op, got %v", err)
+	}
+}
+
+// PurgeProject deletes files, so an unvalidated ID here would be worse than a
+// stray read.
+func TestPurgeProject_RejectsUnsafeProjectID(t *testing.T) {
+	c := newTestCache(t)
+	for _, bad := range []string{"../escape", "a/b", "Repo1", ""} {
+		if err := c.PurgeProject(context.Background(), bad); err == nil {
+			t.Errorf("PurgeProject(%q) should be rejected", bad)
+		}
+	}
+}
+
+// Purging one project must leave others alone.
+func TestPurgeProject_IsolatedPerProject(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCache(t)
+
+	for _, p := range []string{"proj-a", "proj-b"} {
+		if err := c.BindProject(ctx, p, genA); err != nil {
+			t.Fatalf("bind %s: %v", p, err)
+		}
+		if err := c.Put(ctx, p, "memory/x.md", []byte(p)); err != nil {
+			t.Fatalf("Put %s: %v", p, err)
+		}
+	}
+
+	if err := c.PurgeProject(ctx, "proj-a"); err != nil {
+		t.Fatalf("purge proj-a: %v", err)
+	}
+	got, err := c.Get(ctx, "proj-b", "memory/x.md")
+	if err != nil {
+		t.Fatalf("proj-b must survive proj-a's purge: %v", err)
+	}
+	if string(got) != "proj-b" {
+		t.Errorf("proj-b content = %q, want %q", got, "proj-b")
+	}
+}
