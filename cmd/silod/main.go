@@ -48,6 +48,7 @@ func run(args []string) error {
 	cacheMaxEntries := fs.Int("cache-max-entries", 0, "cap cached paths per project (0 = unlimited)")
 	cacheMaxBytes := fs.Int64("cache-max-bytes", 0, "cap cached bytes per project (0 = unlimited)")
 	evictInterval := fs.Duration("evict-interval", daemon.DefaultEvictInterval, "how often to apply the cache retention policy")
+	cacheConfigSource := fs.String("cache-config-source", "registry", "where cache retention policy comes from: \"registry\" (per-project, then fleet default, then these flags) or \"flags\" (pin this host to its flags, ignoring the console)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -137,15 +138,39 @@ func run(args []string) error {
 	// Cache retention runs on its own cadence: an unsynced write is urgent, a
 	// cache entry slightly past its TTL is not, and eviction takes a write
 	// transaction that would otherwise contend with a drain.
-	policy := cache.EvictPolicy{
+	flagPolicy := cache.EvictPolicy{
 		TTL:        *cacheTTL,
 		MaxEntries: *cacheMaxEntries,
 		MaxBytes:   *cacheMaxBytes,
 	}
-	if !policy.Unlimited() {
+
+	// Policy normally comes from the registry (per-project, then the fleet
+	// default, then these flags), so a console change takes effect without
+	// touching every host. --cache-config-source=flags pins this host to its
+	// own flags, which is the escape hatch for debugging a misconfigured fleet.
+	var settings daemon.SettingsReader
+	switch *cacheConfigSource {
+	case "registry":
+		if store, ok := reg.(registry.SettingsStore); ok {
+			settings = store
+		}
+	case "flags":
+		fmt.Println("silod: cache policy pinned to this host's flags; console settings are ignored")
+	default:
+		return fmt.Errorf("bad --cache-config-source %q: want \"registry\" or \"flags\"", *cacheConfigSource)
+	}
+
+	policies := daemon.NewPolicySource(settings, flagPolicy, *evictInterval,
+		func(format string, args ...any) { fmt.Printf(format+"\n", args...) })
+
+	// The worker starts whenever policy could come from the registry, even with
+	// no flags set: a fleet default written from the console has to be applied
+	// by a daemon that was started with no caps of its own. Only a host with
+	// neither a registry nor any flag has nothing to do.
+	if settings != nil || !flagPolicy.Unlimited() {
 		evictor := daemon.NewEvictWorker(d,
 			func() []string { return projects },
-			func(string) cache.EvictPolicy { return policy },
+			policies.Policy,
 			*evictInterval,
 			func(format string, args ...any) { fmt.Printf(format+"\n", args...) })
 		wg.Add(1)
@@ -153,8 +178,13 @@ func run(args []string) error {
 			defer wg.Done()
 			evictor.Run(ctx)
 		}()
-		fmt.Printf("silod: cache retention every %s (ttl=%s max-entries=%d max-bytes=%d)\n",
-			*evictInterval, *cacheTTL, *cacheMaxEntries, *cacheMaxBytes)
+		if settings != nil {
+			fmt.Printf("silod: cache retention every %s (policy from the registry; flag fallback ttl=%s max-entries=%d max-bytes=%d)\n",
+				*evictInterval, *cacheTTL, *cacheMaxEntries, *cacheMaxBytes)
+		} else {
+			fmt.Printf("silod: cache retention every %s (ttl=%s max-entries=%d max-bytes=%d)\n",
+				*evictInterval, *cacheTTL, *cacheMaxEntries, *cacheMaxBytes)
+		}
 	}
 
 	httpSrv := &http.Server{Handler: srv.Handler()}
