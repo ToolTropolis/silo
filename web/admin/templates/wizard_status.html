@@ -4,7 +4,21 @@
   {{template "rail" .}}
 
   <div>
-    {{if not $s.Done}}
+    {{if and (not $s.Done) .Stalled}}
+      {{/* No refresh here: something is wrong, and reloading every two seconds
+           would hide that behind motion. */}}
+      <div class="notice warn">
+        <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+        <div class="n-body">
+          <strong>Provisioning {{.Project}} has not finished.</strong>
+          <p>It has been running for several minutes, which usually means the credential
+            issuer is stuck — <code>weed</code> hangs rather than failing when it cannot
+            reach the addresses SeaweedFS advertises.</p>
+          <p>Check <a href="/projects">all projects</a>: if it is listed, provisioning
+            actually completed. Otherwise check the silo-admin logs.</p>
+        </div>
+      </div>
+    {{else if not $s.Done}}
       {{/* Refresh only while provisioning is in flight. A meta refresh rather
            than JS polling: there is no state to preserve across the reload, and
            it keeps working with scripting disabled. */}}

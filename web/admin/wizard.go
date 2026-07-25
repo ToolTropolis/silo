@@ -303,10 +303,30 @@ func (s *Server) wizardProvision(w http.ResponseWriter, r *http.Request) {
 }
 
 // wizardStatus renders provisioning progress, refreshing until it settles.
+//
+// The tracker is in-memory, so it is not the source of truth: a console restart
+// mid-flow loses it, and a project that finished provisioning would otherwise
+// spin on "pending" forever with no way to find out otherwise. The registry
+// knows whether the project exists, so consult it whenever the tracker cannot
+// say the work is done.
 func (s *Server) wizardStatus(w http.ResponseWriter, r *http.Request) {
 	projectID := strings.TrimSpace(r.FormValue("project"))
-	state, ok := s.tracker.get(projectID)
-	if !ok {
+	if projectID == "" {
+		http.Redirect(w, r, "/onboard/name", http.StatusSeeOther)
+		return
+	}
+	state, tracked := s.tracker.get(projectID)
+
+	// Whether the tracker is missing (restart) or still in flight (stale
+	// goroutine), a registered project is provisioned — say so rather than
+	// spinning.
+	if !tracked || !state.Done {
+		if rec, err := s.registryRecord(r, projectID); err == nil && rec {
+			state = provisionedState(projectID)
+			tracked = true
+		}
+	}
+	if !tracked {
 		http.Redirect(w, r, "/onboard/name", http.StatusSeeOther)
 		return
 	}
@@ -314,7 +334,39 @@ func (s *Server) wizardStatus(w http.ResponseWriter, r *http.Request) {
 	data := s.wizardData("review", projectID)
 	data["State"] = state
 	data["RepoInput"] = strings.TrimSpace(r.FormValue("repo"))
+	// A provision that neither finished nor failed within a generous window is
+	// stuck, and the operator needs to be told rather than left watching a
+	// spinner. Credential issuance is the layer that hangs, and it does so for
+	// reasons the console cannot see.
+	if !state.Done && !state.Started.IsZero() && time.Since(state.Started) > 3*time.Minute {
+		data["Stalled"] = true
+	}
 	s.render(w, "wizard_status.html", data)
+}
+
+// registryRecord reports whether a project exists in the registry.
+func (s *Server) registryRecord(r *http.Request, projectID string) (bool, error) {
+	if s.registry == nil {
+		return false, errors.New("no registry configured")
+	}
+	if _, err := s.registry.Get(r.Context(), projectID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// provisionedState describes a project the registry already knows about.
+func provisionedState(projectID string) *ProvisionState {
+	st := &ProvisionState{ProjectID: projectID, Done: true}
+	for _, name := range []string{
+		"Registry record", "Per-project encryption key",
+		"Versioned bucket", "Scoped S3 credential",
+	} {
+		st.Layers = append(st.Layers, LayerState{
+			Name: name, Status: CheckPass, Detail: "created",
+		})
+	}
+	return st
 }
 
 func (s *Server) wizardDone(w http.ResponseWriter, r *http.Request) {

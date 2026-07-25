@@ -422,3 +422,47 @@ func TestWizard_RepoIsCarriedThroughTheFlow(t *testing.T) {
 		t.Error("the review step should carry the repo into provisioning")
 	}
 }
+
+// The bug an operator actually hit: silo-admin restarted mid-flow, so the
+// in-memory tracker lost the project, and a fully-provisioned project sat on
+// four "pending" spinners forever. The registry knows the truth; consult it.
+func TestWizard_StatusRecoversAfterRestart(t *testing.T) {
+	// A registry that already knows the project — i.e. provisioning finished —
+	// with a tracker that has never heard of it, as after a restart.
+	ts := newFixture(t, Config{
+		Registry: activeProject("already-provisioned"),
+		Settings: newFakeSettings(nil),
+		Prov:     &fakeProvisioner{},
+	})
+
+	body := getBody(t, ts, "/onboard/status?project=already-provisioned")
+
+	if strings.Contains(body, "pending") {
+		t.Error("a provisioned project must not show pending layers after a restart")
+	}
+	if !strings.Contains(body, "is ready") {
+		t.Error("the status page should report a registered project as done")
+	}
+	if !strings.Contains(body, "Connect a repo") {
+		t.Error("it should offer the next step rather than stranding the operator")
+	}
+}
+
+// A project that is neither tracked nor registered never started; sending the
+// operator back to the beginning is right.
+func TestWizard_StatusForNeverStartedStillRedirects(t *testing.T) {
+	ts := newFixture(t, Config{
+		Registry: activeProject("other"),
+		Settings: newFakeSettings(nil),
+		Prov:     &fakeProvisioner{},
+	})
+
+	resp, err := noRedirectClient().Get(ts.URL + "/onboard/status?project=never-started")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 303 {
+		t.Errorf("status = %d, want a redirect for an unknown project", resp.StatusCode)
+	}
+}
