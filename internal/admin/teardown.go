@@ -84,6 +84,25 @@ func (o *Onboarder) Teardown(ctx context.Context, projectID string, step Teardow
 
 	switch step {
 	case StepRevokeCredential:
+		// Agent tokens die with the S3 credential, not at deregister.
+		//
+		// This is the step whose whole purpose is removing access, and it runs
+		// before anything is destroyed. Leaving tokens live until the last step
+		// would mean an agent could still read and write a project through the
+		// operator-paced gap while its bucket was being deleted underneath it.
+		if o.Tokens != nil {
+			n, err := o.Tokens.RevokeProjectTokens(ctx, projectID)
+			if err != nil {
+				return fmt.Errorf("admin: teardown %q: revoke agent tokens: %w", projectID, err)
+			}
+			if n > 0 {
+				fmt.Printf("  revoked %d agent token(s) for %q.\n", n, projectID)
+			}
+		} else {
+			fmt.Printf("  WARNING: no token store configured, so %q's agent tokens were NOT revoked.\n"+
+				"           They will keep authorizing until revoked by hand.\n", projectID)
+		}
+
 		if err := o.Creds.Revoke(ctx, rec.CredentialID); err != nil {
 			return fmt.Errorf("admin: teardown %q: revoke credential: %w", projectID, err)
 		}

@@ -581,3 +581,63 @@ func TestTeardown_NilSettingsStoreIsFine(t *testing.T) {
 		t.Error("teardown must complete with no settings store configured")
 	}
 }
+
+// recordingRevoker notes which projects had their agent tokens revoked.
+type recordingRevoker struct {
+	revoked []string
+	count   int
+	err     error
+}
+
+func (r *recordingRevoker) RevokeProjectTokens(_ context.Context, projectID string) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	r.revoked = append(r.revoked, projectID)
+	return r.count, nil
+}
+
+// Agent tokens must die at revoke-credential — the step whose purpose is
+// removing access — not at deregister. Leaving them live until the last step
+// would let an agent keep reading and writing through the operator-paced gap
+// while the bucket is being deleted underneath it.
+func TestTeardown_RevokesAgentTokensAtRevokeCredential(t *testing.T) {
+	ctx := context.Background()
+	o, _ := newTeardownFixture(registry.StatusActive)
+	tokens := &recordingRevoker{count: 2}
+	o.Tokens = tokens
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeCredential); err != nil {
+		t.Fatalf("revoke-credential: %v", err)
+	}
+	if len(tokens.revoked) != 1 || tokens.revoked[0] != "proj-11" {
+		t.Errorf("revoked = %v, want [proj-11] at the first teardown step", tokens.revoked)
+	}
+}
+
+// A failure to revoke tokens must stop the step. Proceeding would revoke the S3
+// credential while leaving live tokens pointed at a project being destroyed.
+func TestTeardown_TokenRevocationFailureStopsTheStep(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusActive)
+	o.Tokens = &recordingRevoker{err: errors.New("rqlite unreachable")}
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeCredential); err == nil {
+		t.Fatal("a failed token revocation must stop the step")
+	}
+	if len(f.creds.revoked) != 0 {
+		t.Error("the S3 credential must not be revoked when tokens could not be")
+	}
+}
+
+// A nil token store is a real gap, not a nicety: teardown proceeds but must say
+// so, because those tokens keep authorizing against a project that is going away.
+func TestTeardown_NoTokenStoreStillCompletes(t *testing.T) {
+	ctx := context.Background()
+	o, _ := newTeardownFixture(registry.StatusActive)
+	o.Tokens = nil
+
+	if err := o.Teardown(ctx, "proj-11", StepRevokeCredential); err != nil {
+		t.Fatalf("teardown should still complete: %v", err)
+	}
+}

@@ -46,6 +46,11 @@ type Onboarder struct {
 	// a nil store means the row is simply left behind, which is untidy rather
 	// than dangerous.
 	Settings SettingsRemover
+	// Tokens revokes a project's agent tokens when its access is revoked.
+	// Optional, but unlike Settings a nil store here is a real gap: the tokens
+	// would keep authorizing against a project that no longer exists, so
+	// teardown says so loudly rather than passing over it.
+	Tokens TokenRevoker
 }
 
 // SettingsRemover deletes a project's stored cache policy.
@@ -55,6 +60,14 @@ type Onboarder struct {
 // change here start reading policy it has no business consulting.
 type SettingsRemover interface {
 	DeleteSettings(ctx context.Context, projectID string) error
+}
+
+// TokenRevoker kills every agent token issued for a project.
+//
+// Narrow for the same reason as SettingsRemover, and more pointedly: teardown
+// must be able to revoke credentials but has no business minting them.
+type TokenRevoker interface {
+	RevokeProjectTokens(ctx context.Context, projectID string) (int, error)
 }
 
 // CachePurger drops a project's local cache file.
