@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 	"github.com/tooltropolis/silo/internal/daemon"
 	"github.com/tooltropolis/silo/internal/devstack"
 	"github.com/tooltropolis/silo/internal/project"
+	"github.com/tooltropolis/silo/internal/registry"
 )
 
 func main() {
@@ -40,6 +42,7 @@ func run(args []string) error {
 	tokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs the SDK authenticates with (or SILO_TOKENS)")
 	syncInterval := fs.Duration("sync-interval", daemon.DefaultSyncInterval, "how often to replay locally-queued writes to the backend")
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests and a final queue drain on shutdown")
+	rqliteAddrs := fs.String("rqlite", os.Getenv("SILO_RQLITE_ADDRS"), "comma-separated rqlite node addresses (or SILO_RQLITE_ADDRS); optional, but required to verify cache ownership")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -81,9 +84,24 @@ func run(args []string) error {
 	}
 	defer localCache.Close()
 
-	// Registry and KMS aren't needed for the SDK read/write surface; they're
-	// wired in as the daemon takes on onboarding-aware behavior.
-	d := daemon.New(be, localCache, nil, nil)
+	// The registry is optional so the quickstart and single-node dev flow keep
+	// working, but without it the daemon cannot check which generation of a
+	// project owns a cache file. Say so plainly rather than degrading silently.
+	var reg registry.TenantRegistry
+	if *rqliteAddrs != "" {
+		r, err := registry.NewRqlite(context.Background(), splitCSV(*rqliteAddrs))
+		if err != nil {
+			return fmt.Errorf("connect registry: %w", err)
+		}
+		defer r.Close()
+		reg = r
+	} else {
+		fmt.Println("silod: WARNING no --rqlite configured; cache ownership cannot be verified")
+	}
+
+	// KMS isn't needed for the SDK read/write surface; it's wired in as the
+	// daemon takes on onboarding-aware behavior.
+	d := daemon.New(be, localCache, reg, nil)
 	srv := daemon.NewServer(d, verifier)
 
 	// Bind first, then announce. Printing before the bind makes a port conflict
@@ -99,7 +117,7 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	projects := verifier.Projects()
+	projects := syncProjects(context.Background(), reg, verifier)
 	worker := daemon.NewSyncWorker(d, projects, *syncInterval, func(format string, args ...any) {
 		fmt.Printf(format+"\n", args...)
 	})
@@ -184,4 +202,54 @@ func parseTokens(spec string) (daemon.StaticTokenVerifier, error) {
 		return nil, fmt.Errorf("--tokens contained no valid token=projectID pairs")
 	}
 	return v, nil
+}
+
+// splitCSV splits a comma-separated flag value, dropping blanks.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// syncProjects decides which projects the sync worker drains.
+//
+// Tokens alone miss a project whose token was rotated away mid-outage — its
+// queue would then never drain. The registry alone would miss everything if
+// rqlite is briefly unreachable at startup. So take the union: the registry is
+// authoritative about what exists, and the token set guarantees that a project
+// actively being written to is never dropped because of a registry blip.
+func syncProjects(ctx context.Context, reg registry.TenantRegistry, verifier daemon.StaticTokenVerifier) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(id string) {
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+
+	for _, id := range verifier.Projects() {
+		add(id)
+	}
+	if reg != nil {
+		recs, err := reg.List(ctx)
+		if err != nil {
+			fmt.Printf("silod: could not list projects from the registry (%v); syncing the token set only\n", err)
+		} else {
+			for _, rec := range recs {
+				// A decommissioned project has no bucket to drain into.
+				if rec.Status == registry.StatusDecommissioned {
+					continue
+				}
+				add(rec.ProjectID)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

@@ -51,10 +51,10 @@ type backoffState struct {
 
 // NewSyncWorker builds a worker for a fixed set of projects.
 //
-// The project list is a snapshot — in silod it comes from --tokens, since a
-// project with no token takes no writes and so can have no queue. When the
-// registry is wired into silod this should become registry.List() instead, to
-// cover a project whose token was rotated away mid-outage.
+// The project list is a snapshot. silod builds it from the union of its token
+// set and the registry: tokens alone would miss a project whose token was
+// rotated away mid-outage, leaving its queue to sit forever, and the registry
+// alone would miss everything if rqlite were briefly unreachable at startup.
 func NewSyncWorker(d *Daemon, projects []string, interval time.Duration, logf func(string, ...any)) *SyncWorker {
 	if interval <= 0 {
 		interval = DefaultSyncInterval
