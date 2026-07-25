@@ -47,6 +47,13 @@ func (d *Daemon) SyncProject(ctx context.Context, projectID string) error {
 	return nil
 }
 
+// QueueDepth reports how many of a project's writes are still buffered locally,
+// i.e. accepted from an agent but not yet durable. Non-destructive, so it is
+// safe to poll from the sync worker and from operator surfaces.
+func (d *Daemon) QueueDepth(ctx context.Context, projectID string) (int, error) {
+	return d.cache.QueueDepth(ctx, projectID)
+}
+
 // backendReachable probes the backend with a harmless Get so a drain doesn't
 // start against a still-down backend. A not-found result means the backend is
 // up (it answered); any other error means it's still unreachable.
