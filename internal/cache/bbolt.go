@@ -40,6 +40,9 @@ type BoltCache struct {
 	// openTimeout bounds how long we wait for another process to release a
 	// project's file lock. Overridable so tests don't pay the full wait.
 	openTimeout time.Duration
+	// now supplies the clock, so eviction tests can advance time instead of
+	// sleeping.
+	now func() time.Time
 
 	mu  sync.Mutex
 	dbs map[string]*projectDB // projectID -> open handle
@@ -63,6 +66,7 @@ func NewBoltCache(baseDir string) (*BoltCache, error) {
 	return &BoltCache{
 		baseDir:     baseDir,
 		openTimeout: defaultOpenTimeout,
+		now:         time.Now,
 		dbs:         make(map[string]*projectDB),
 	}, nil
 }
@@ -189,8 +193,16 @@ func (c *BoltCache) BindProject(ctx context.Context, projectID, generation strin
 				return err
 			}
 		}
+		if err := tx.Bucket(metaBucket).Put(formatVersionKey, itob(uint64(entryVersion))); err != nil {
+			return err
+		}
 		return tx.Bucket(metaBucket).Put(generationKey, []byte(generation))
 	})
+	if err == nil {
+		// Separate pass so a file that matches its generation still gets its
+		// entry format checked — the two version independently.
+		err = c.ensureEntryFormat(db)
+	}
 	if err != nil {
 		_ = db.Close()
 		delete(c.dbs, projectID)
@@ -249,6 +261,34 @@ func (c *BoltCache) PurgeProject(ctx context.Context, projectID string) error {
 	return nil
 }
 
+// ensureEntryFormat discards content written in an older entry layout.
+//
+// The generation stamp and the entry format version answer different questions —
+// "whose data is this?" and "can I read it?" — so a file can match its
+// generation while still holding entries this build cannot parse. Checking them
+// separately means a future format change is a deliberate one-time cold cache
+// rather than a scattering of unreadable values.
+//
+// Content only: the queue is JSON and versions independently, and discarding it
+// would be data loss.
+func (c *BoltCache) ensureEntryFormat(db *bolt.DB) error {
+	return db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(metaBucket)
+		if stored := meta.Get(formatVersionKey); len(stored) == 8 {
+			if btoi(stored) == uint64(entryVersion) {
+				return nil
+			}
+		}
+		if err := tx.DeleteBucket(contentBucket); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucket(contentBucket); err != nil {
+			return err
+		}
+		return meta.Put(formatVersionKey, itob(uint64(entryVersion)))
+	})
+}
+
 // Close releases every open bbolt handle. Safe to call once at shutdown.
 func (c *BoltCache) Close() error {
 	c.mu.Lock()
@@ -278,8 +318,16 @@ func (c *BoltCache) Get(ctx context.Context, projectID, path string) ([]byte, er
 		if v == nil {
 			return ErrNotFound
 		}
+		content, _, decErr := decodeEntry(v)
+		if decErr != nil {
+			// A corrupt entry is treated as absent rather than fatal: the
+			// backend is the source of truth, so the caller can still get the
+			// real content. Failing here would turn a damaged cache byte into
+			// an outage.
+			return ErrNotFound
+		}
 		// bbolt values are only valid within the txn — copy before returning.
-		out = append([]byte(nil), v...)
+		out = append([]byte(nil), content...)
 		return nil
 	})
 	if err != nil {
@@ -297,8 +345,9 @@ func (c *BoltCache) Put(ctx context.Context, projectID, path string, content []b
 	if err != nil {
 		return err
 	}
+	entry := encodeEntry(content, c.now())
 	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(contentBucket).Put([]byte(path), content)
+		return tx.Bucket(contentBucket).Put([]byte(path), entry)
 	})
 }
 
@@ -453,3 +502,7 @@ func itob(v uint64) []byte {
 	binary.BigEndian.PutUint64(b, v)
 	return b
 }
+
+// btoi reverses itob. Callers must check the length first; an 8-byte value is
+// the only thing itob ever produces.
+func btoi(b []byte) uint64 { return binary.BigEndian.Uint64(b) }

@@ -44,6 +44,10 @@ func run(args []string) error {
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests and a final queue drain on shutdown")
 	rqliteAddrs := fs.String("rqlite", os.Getenv("SILO_RQLITE_ADDRS"), "comma-separated rqlite node addresses (or SILO_RQLITE_ADDRS); optional, but required to verify cache ownership")
 	adminListen := fs.String("admin-listen", "", "operator socket for cache stats and purges (a path; empty disables it). Not token-authenticated — the socket's permissions are the boundary, so do not bind it to TCP")
+	cacheTTL := fs.Duration("cache-ttl", 0, "discard cached entries older than this (0 = keep forever)")
+	cacheMaxEntries := fs.Int("cache-max-entries", 0, "cap cached paths per project (0 = unlimited)")
+	cacheMaxBytes := fs.Int64("cache-max-bytes", 0, "cap cached bytes per project (0 = unlimited)")
+	evictInterval := fs.Duration("evict-interval", daemon.DefaultEvictInterval, "how often to apply the cache retention policy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -129,6 +133,29 @@ func run(args []string) error {
 		defer wg.Done()
 		worker.Run(ctx)
 	}()
+
+	// Cache retention runs on its own cadence: an unsynced write is urgent, a
+	// cache entry slightly past its TTL is not, and eviction takes a write
+	// transaction that would otherwise contend with a drain.
+	policy := cache.EvictPolicy{
+		TTL:        *cacheTTL,
+		MaxEntries: *cacheMaxEntries,
+		MaxBytes:   *cacheMaxBytes,
+	}
+	if !policy.Unlimited() {
+		evictor := daemon.NewEvictWorker(d,
+			func() []string { return projects },
+			func(string) cache.EvictPolicy { return policy },
+			*evictInterval,
+			func(format string, args ...any) { fmt.Printf(format+"\n", args...) })
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			evictor.Run(ctx)
+		}()
+		fmt.Printf("silod: cache retention every %s (ttl=%s max-entries=%d max-bytes=%d)\n",
+			*evictInterval, *cacheTTL, *cacheMaxEntries, *cacheMaxBytes)
+	}
 
 	httpSrv := &http.Server{Handler: srv.Handler()}
 	serveErr := make(chan error, 1)

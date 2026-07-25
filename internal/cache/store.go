@@ -57,6 +57,11 @@ type PendingWrite struct {
 // ErrNotFound is returned by Get when no entry exists at the path.
 var ErrNotFound = errors.New("cache: entry not found")
 
+// ErrCorruptEntry is returned when a stored entry does not carry a valid
+// header. Callers treat it as a miss: the backend is the source of truth, so a
+// damaged cache byte must not become an outage.
+var ErrCorruptEntry = errors.New("cache: corrupt entry")
+
 // ErrCacheLocked is returned when another process holds the bbolt lock on a
 // project's cache file. Two Silo processes sharing a cache directory is a
 // configuration mistake, not a transient condition, so it is named rather than

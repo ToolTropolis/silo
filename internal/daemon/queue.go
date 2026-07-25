@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/tooltropolis/silo/internal/backend"
+	"github.com/tooltropolis/silo/internal/cache"
 )
 
 // SyncProject drains a project's local write queue back to the durable backend,
@@ -110,6 +111,37 @@ func (d *Daemon) PurgeCache(ctx context.Context, projectID string) error {
 		return fmt.Errorf("daemon: purge %q: %d write(s) still queued: %w", projectID, depth, ErrQueuedWrites)
 	}
 	return purger.PurgeProject(ctx, projectID)
+}
+
+// cacheEvictor is implemented by caches that can bound their own size. Off
+// LocalCache for the same reason as the purger: an operator concern rather than
+// part of the per-request contract.
+type cacheEvictor interface {
+	Evict(ctx context.Context, projectID string, policy cache.EvictPolicy) (cache.EvictResult, error)
+	Stats(ctx context.Context, projectID string) (cache.CacheStats, error)
+}
+
+// EvictCache applies a retention policy to a project's cached content.
+//
+// The queue is never touched — those are writes that never reached the backend,
+// so removing them would be data loss rather than cache management.
+func (d *Daemon) EvictCache(ctx context.Context, projectID string, policy cache.EvictPolicy) (cache.EvictResult, error) {
+	evictor, ok := d.cache.(cacheEvictor)
+	if !ok {
+		return cache.EvictResult{}, fmt.Errorf("daemon: evict %q: cache does not support eviction", projectID)
+	}
+	return evictor.Evict(ctx, projectID, policy)
+}
+
+// CacheStats reports a project's cache size, both as live content and as the
+// file on disk. The two diverge because bbolt never shrinks a file, which is
+// what makes compaction worth doing.
+func (d *Daemon) CacheStats(ctx context.Context, projectID string) (cache.CacheStats, error) {
+	evictor, ok := d.cache.(cacheEvictor)
+	if !ok {
+		return cache.CacheStats{}, fmt.Errorf("daemon: stats %q: cache does not support stats", projectID)
+	}
+	return evictor.Stats(ctx, projectID)
 }
 
 // oldestQueuer is implemented by caches that can report the head of the queue.
