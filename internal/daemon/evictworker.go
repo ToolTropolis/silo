@@ -13,6 +13,15 @@ import (
 // contend with a drain.
 const DefaultEvictInterval = 5 * time.Minute
 
+// compactRatio is how bloated a file must be before it is worth rewriting:
+// on-disk size over live content. Below this the copy costs more than it saves.
+const compactRatio = 2.0
+
+// minCompactBytes stops small files being rewritten. A nearly-empty cache is
+// mostly bbolt's own page overhead, so its ratio is always poor and always
+// irrelevant.
+const minCompactBytes = 4 << 20 // 4 MiB
+
 // EvictWorker keeps each project's cached content within its policy.
 //
 // Separate from SyncWorker rather than another job on its tick. The sync
@@ -63,6 +72,7 @@ func (w *EvictWorker) Run(ctx context.Context) {
 // EvictOnce sweeps every project once and returns what it removed.
 func (w *EvictWorker) EvictOnce(ctx context.Context) []cache.EvictResult {
 	var results []cache.EvictResult
+	compacted := false
 	for _, projectID := range w.projects() {
 		if ctx.Err() != nil {
 			return results
@@ -81,6 +91,41 @@ func (w *EvictWorker) EvictOnce(ctx context.Context) []cache.EvictResult {
 				projectID, res.Evicted(), res.EvictedTTL, res.EvictedSize, res.EntriesAfter)
 		}
 		results = append(results, res)
+
+		// Eviction frees pages for reuse but never shrinks the file, so the disk
+		// only comes back on a rewrite. At most one project per pass: compaction
+		// takes a full copy, and a fleet all doing it at once is a disk and IO
+		// spike for something that is never urgent.
+		if !compacted {
+			compacted = w.maybeCompact(ctx, projectID)
+		}
 	}
 	return results
+}
+
+// maybeCompact rewrites a project's cache file when it holds substantially more
+// disk than live content. Reports whether it ran.
+func (w *EvictWorker) maybeCompact(ctx context.Context, projectID string) bool {
+	stats, err := w.daemon.CacheStats(ctx, projectID)
+	if err != nil {
+		return false
+	}
+	if stats.FileBytes < minCompactBytes {
+		return false
+	}
+	if stats.Bytes > 0 && float64(stats.FileBytes)/float64(stats.Bytes) < compactRatio {
+		return false
+	}
+
+	res, err := w.daemon.CompactCache(ctx, projectID)
+	if err != nil {
+		w.logf("silod: compact %s: %v", projectID, err)
+		return false
+	}
+	if res.Skipped {
+		return false // e.g. queued writes; a later pass will get it
+	}
+	w.logf("silod: compact %s: reclaimed %d bytes (%d -> %d)",
+		projectID, res.Reclaimed(), res.BytesBefore, res.BytesAfter)
+	return true
 }

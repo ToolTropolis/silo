@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +141,41 @@ func TestEvictWorker_StopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return promptly after cancel")
+	}
+}
+
+// TestEvictWorker_CompactsAtMostOnePerPass: compaction takes a full copy of the
+// file, so a fleet all doing it in the same tick is a disk and IO spike for
+// something that is never urgent.
+func TestEvictWorker_CompactsAtMostOnePerPass(t *testing.T) {
+	ctx := context.Background()
+	be := newMapBackend()
+	d, _ := newSyncDaemon(t, be)
+
+	// Two projects, each bloated enough to qualify.
+	big := make([]byte, 64*1024)
+	for _, proj := range []string{"proj-a", "proj-b"} {
+		for i := range 100 {
+			if _, err := d.SafeWrite(ctx, proj, fmt.Sprintf("memory/%03d.md", i),
+				func([]byte) []byte { return big }, "agent", "s1"); err != nil {
+				t.Fatalf("seed %s: %v", proj, err)
+			}
+		}
+	}
+
+	var compacted int
+	w := NewEvictWorker(d,
+		func() []string { return []string{"proj-a", "proj-b"} },
+		func(string) cache.EvictPolicy { return cache.EvictPolicy{MaxEntries: 2} },
+		time.Millisecond,
+		func(format string, args ...any) {
+			if strings.Contains(format, "compact") {
+				compacted++
+			}
+		})
+
+	w.EvictOnce(ctx)
+	if compacted > 1 {
+		t.Errorf("compacted %d projects in one pass, want at most 1", compacted)
 	}
 }
