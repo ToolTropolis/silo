@@ -111,7 +111,7 @@ func newSyncDaemon(t *testing.T, b backend.DurableBackend) (*Daemon, cache.Local
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(b, c, nil, nil), c
+	return New(b, c, newGenRegistry(), nil), c
 }
 
 // TestSyncProject_DrainsQueuedWritesAfterRecovery is the NAV-72 acceptance

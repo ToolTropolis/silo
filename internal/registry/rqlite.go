@@ -173,10 +173,10 @@ func (r *Rqlite) Register(ctx context.Context, rec ProjectRecord) error {
 	}
 	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
 		Query: `INSERT INTO projects
-			(project_id, bucket_name, credential_id, key_id, created_at, status)
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			(project_id, bucket_name, credential_id, key_id, created_at, status, generation)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		Arguments: []interface{}{
-			rec.ProjectID, rec.BucketName, rec.CredentialID, rec.KeyID, rec.CreatedAt, rec.Status,
+			rec.ProjectID, rec.BucketName, rec.CredentialID, rec.KeyID, rec.CreatedAt, rec.Status, rec.Generation,
 		},
 	})
 	if err != nil {
@@ -190,7 +190,7 @@ func (r *Rqlite) Register(ctx context.Context, rec ProjectRecord) error {
 
 func (r *Rqlite) Get(ctx context.Context, projectID string) (ProjectRecord, error) {
 	rows, err := r.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
-		Query: `SELECT project_id, bucket_name, credential_id, key_id, created_at, status
+		Query: `SELECT project_id, bucket_name, credential_id, key_id, created_at, status, generation
 			FROM projects WHERE project_id = ?`,
 		Arguments: []interface{}{projectID},
 	})
@@ -205,7 +205,7 @@ func (r *Rqlite) Get(ctx context.Context, projectID string) (ProjectRecord, erro
 
 func (r *Rqlite) List(ctx context.Context) ([]ProjectRecord, error) {
 	rows, err := r.conn.QueryOneContext(ctx,
-		`SELECT project_id, bucket_name, credential_id, key_id, created_at, status
+		`SELECT project_id, bucket_name, credential_id, key_id, created_at, status, generation
 			FROM projects ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("registry: list: %w", err)
@@ -280,7 +280,8 @@ func (r *Rqlite) Deregister(ctx context.Context, projectID string) error {
 // scanRecord reads the standard column order into a ProjectRecord.
 func scanRecord(rows gorqlite.QueryResult) (ProjectRecord, error) {
 	var rec ProjectRecord
-	err := rows.Scan(&rec.ProjectID, &rec.BucketName, &rec.CredentialID, &rec.KeyID, &rec.CreatedAt, &rec.Status)
+	err := rows.Scan(&rec.ProjectID, &rec.BucketName, &rec.CredentialID, &rec.KeyID,
+		&rec.CreatedAt, &rec.Status, &rec.Generation)
 	if err != nil {
 		return ProjectRecord{}, fmt.Errorf("registry: scan row: %w", err)
 	}

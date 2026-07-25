@@ -21,7 +21,7 @@ func newHTTPFixture(t *testing.T, be *fakeBackend) *httptest.Server {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	d := New(be, c, nil, nil)
+	d := New(be, c, newGenRegistry(), nil)
 	s := NewServer(d, StaticTokenVerifier{"tok-a": "proj-a"})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
@@ -122,7 +122,7 @@ func TestHandleQueue_ReportsOwnProjectOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	d := New(be, c, nil, nil)
+	d := New(be, c, newGenRegistry(), nil)
 	s := NewServer(d, StaticTokenVerifier{"tok-a": "proj-a", "tok-b": "proj-b"})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
@@ -179,7 +179,7 @@ func TestHandleSync_DrainsOnDemand(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 
-	d := New(be, c, nil, nil)
+	d := New(be, c, newGenRegistry(), nil)
 	s := NewServer(d, StaticTokenVerifier{"tok-a": "proj-a"})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)

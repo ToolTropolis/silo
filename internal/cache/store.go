@@ -21,6 +21,18 @@ type LocalCache interface {
 	Enqueue(ctx context.Context, projectID string, w PendingWrite) error
 	DrainQueue(ctx context.Context, projectID string) ([]PendingWrite, error)
 
+	// BindProject verifies that a project's local store belongs to the given
+	// generation, discarding anything that belonged to a previous one.
+	//
+	// On the LocalCache interface rather than behind a type assertion — unlike
+	// the reporting-only additions — because it is a tenant boundary, not a
+	// nicety. A cache implementation that silently skipped the check would be
+	// an isolation hole with no compile error to catch it.
+	//
+	// Callers bind once per project before first use; the check is expected to
+	// be cheap enough to be idempotent but is not on the read path.
+	BindProject(ctx context.Context, projectID, generation string) error
+
 	// QueueDepth reports how many writes are buffered for a project without
 	// consuming them.
 	//
@@ -44,3 +56,9 @@ type PendingWrite struct {
 
 // ErrNotFound is returned by Get when no entry exists at the path.
 var ErrNotFound = errors.New("cache: entry not found")
+
+// ErrNoGeneration is returned by BindProject when the caller has no generation
+// to check against. It is deliberately an error rather than a permissive
+// default: binding with an empty generation would make every file match, which
+// is exactly the hole the check closes.
+var ErrNoGeneration = errors.New("cache: no generation supplied")

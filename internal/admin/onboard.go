@@ -5,6 +5,8 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -70,10 +72,20 @@ func (o *Onboarder) Onboard(ctx context.Context, projectID string) (err error) {
 	}()
 
 	// Step 1 — registry record (status active).
+	//
+	// The generation is minted here and never changes for this incarnation of
+	// the project. It is what lets the daemon tell a fresh project apart from a
+	// re-onboarded one reusing the same ID, and so keeps a previous tenant's
+	// cached memory from being served to the new one.
+	generation, err := newGeneration()
+	if err != nil {
+		return fmt.Errorf("admin: onboard %q: %w", projectID, err)
+	}
 	rec := registry.ProjectRecord{
 		ProjectID:  projectID,
 		BucketName: bucket,
 		Status:     registry.StatusActive,
+		Generation: generation,
 	}
 	if err = o.Registry.Register(ctx, rec); err != nil {
 		return fmt.Errorf("admin: onboard %q: register: %w", projectID, err)
@@ -129,4 +141,19 @@ func runCompensations(comps []func() error) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// newGeneration mints an opaque identifier for one incarnation of a project.
+//
+// Random rather than derived: a timestamp collides on a fast re-onboard and can
+// be reproduced by a restore, and the credential and key refs are cleared by
+// teardown before the record is deleted (and rotating a key must not invalidate
+// a live cache). 128 bits of randomness makes collision not worth reasoning
+// about.
+func newGeneration() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("mint generation: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }

@@ -54,6 +54,18 @@ func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit fun
 		current, ver, err := d.backend.Get(ctx, projectID, path, "")
 		if err != nil && !errors.Is(err, backend.ErrNotFound) {
 			// Backend unreachable: fall back to local cache + queue.
+			//
+			// Bind first. Queuing into a file that belongs to a previous tenant
+			// would mix this project's writes with theirs, and the sync worker
+			// would then replay both into this project's bucket. Binding
+			// discards the stale contents before anything is added.
+			//
+			// A bind failure is not fatal here: the write still has to go
+			// somewhere, and an unverified queue is safe as long as it is never
+			// read back cross-tenant, which the read path enforces separately.
+			if bindErr := d.bindCache(ctx, projectID); bindErr != nil && !errors.Is(bindErr, ErrCacheUnverified) {
+				return WriteDurable, bindErr
+			}
 			newContent := edit(nil)
 			if qErr := d.cache.Enqueue(ctx, projectID, cache.PendingWrite{
 				Path:      path,
@@ -84,7 +96,12 @@ func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit fun
 			return WriteDurable, err
 		}
 
-		_ = d.cache.Put(ctx, projectID, path, newContent) // keep local cache warm
+		// Bind before warming, so the entry lands in a file stamped as this
+		// project's. Warming an unstamped file would just have it discarded by
+		// the first bind that ran later.
+		if bindErr := d.bindCache(ctx, projectID); bindErr == nil {
+			_ = d.cache.Put(ctx, projectID, path, newContent) // keep local cache warm
+		}
 		return WriteDurable, nil
 	}
 	return WriteDurable, ErrTooManyConflicts

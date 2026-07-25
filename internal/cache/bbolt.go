@@ -19,7 +19,11 @@ import (
 var (
 	contentBucket = []byte("content") // path -> content bytes (the warm cache)
 	queueBucket   = []byte("queue")   // monotonic seq -> serialized PendingWrite
+	metaBucket    = []byte("meta")    // file-level facts, e.g. which tenant owns it
 )
+
+// generationKey records which incarnation of a project owns this cache file.
+var generationKey = []byte("generation")
 
 // BoltCache is the default LocalCache. It keeps one bbolt file per project under
 // a base directory (opened lazily on first use) with a content bucket for the
@@ -29,7 +33,14 @@ type BoltCache struct {
 	baseDir string
 
 	mu  sync.Mutex
-	dbs map[string]*bolt.DB // projectID -> open handle
+	dbs map[string]*projectDB // projectID -> open handle
+}
+
+// projectDB is an open handle plus the generation it was verified against, so
+// the check happens once per open rather than on every read.
+type projectDB struct {
+	db         *bolt.DB
+	generation string
 }
 
 var _ LocalCache = (*BoltCache)(nil)
@@ -40,7 +51,7 @@ func NewBoltCache(baseDir string) (*BoltCache, error) {
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cache: create base dir: %w", err)
 	}
-	return &BoltCache{baseDir: baseDir, dbs: make(map[string]*bolt.DB)}, nil
+	return &BoltCache{baseDir: baseDir, dbs: make(map[string]*projectDB)}, nil
 }
 
 // db opens (once) and returns the bbolt handle for a project, initializing its
@@ -56,8 +67,15 @@ func (c *BoltCache) db(projectID string) (*bolt.DB, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if db, ok := c.dbs[projectID]; ok {
-		return db, nil
+	return c.openLocked(projectID)
+}
+
+// openLocked returns the project's handle, opening it if needed. The caller
+// must hold c.mu — BindProject already does, and taking it twice would
+// deadlock.
+func (c *BoltCache) openLocked(projectID string) (*bolt.DB, error) {
+	if pdb, ok := c.dbs[projectID]; ok {
+		return pdb.db, nil
 	}
 	path := filepath.Join(c.baseDir, projectID+".bbolt")
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
@@ -65,7 +83,7 @@ func (c *BoltCache) db(projectID string) (*bolt.DB, error) {
 		return nil, fmt.Errorf("cache: open %s: %w", path, err)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{contentBucket, queueBucket} {
+		for _, b := range [][]byte{contentBucket, queueBucket, metaBucket} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -75,8 +93,99 @@ func (c *BoltCache) db(projectID string) (*bolt.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("cache: init buckets: %w", err)
 	}
-	c.dbs[projectID] = db
+	c.dbs[projectID] = &projectDB{db: db}
 	return db, nil
+}
+
+// BindProject verifies that this project's cache file belongs to the given
+// generation, discarding its contents if it does not.
+//
+// The cache file is named after the projectID, so a project torn down and later
+// re-onboarded under the same ID inherits the previous tenant's file. Without
+// this check the read path's outage fallback would serve the old tenant's
+// memory to the new project, and the sync worker would replay the old tenant's
+// queued writes into the new project's bucket.
+//
+// The check runs on open, not per read: once bound, the handle carries its
+// verified generation and Get/Put cost exactly what they cost before.
+//
+// A file with no stamp predates generations. Its content is discarded — it
+// cannot be proven to belong to this tenant — but its QUEUE is preserved, since
+// those are unsynced writes and dropping them would be data loss.
+func (c *BoltCache) BindProject(ctx context.Context, projectID, generation string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if generation == "" {
+		return fmt.Errorf("cache: bind %q: %w", projectID, ErrNoGeneration)
+	}
+	if err := project.ValidateID(projectID); err != nil {
+		return fmt.Errorf("cache: %w", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// An already-bound handle for a different generation means the project was
+	// re-onboarded while this process was running. Close it so the reopen below
+	// re-runs the check rather than serving the old tenant from a live handle.
+	if pdb, ok := c.dbs[projectID]; ok {
+		if pdb.generation == generation {
+			return nil
+		}
+		_ = pdb.db.Close()
+		delete(c.dbs, projectID)
+	}
+
+	db, err := c.openLocked(projectID)
+	if err != nil {
+		return err
+	}
+
+	wiped := 0
+	err = db.Update(func(tx *bolt.Tx) error {
+		stamped := tx.Bucket(metaBucket).Get(generationKey)
+		if string(stamped) == generation {
+			return nil // ours
+		}
+		// Either a previous tenant's file or a pre-generation one. Neither can
+		// be shown to belong to this project, so the content goes.
+		wiped = tx.Bucket(contentBucket).Stats().KeyN
+		if err := tx.DeleteBucket(contentBucket); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucket(contentBucket); err != nil {
+			return err
+		}
+		// A stamped-but-different generation means the queue holds the previous
+		// tenant's writes, which must never replay into this project's bucket.
+		// An unstamped file predates generations, so its queue is this
+		// project's own unsynced data and is kept.
+		if len(stamped) > 0 {
+			if err := tx.DeleteBucket(queueBucket); err != nil {
+				return err
+			}
+			if _, err := tx.CreateBucket(queueBucket); err != nil {
+				return err
+			}
+		}
+		return tx.Bucket(metaBucket).Put(generationKey, []byte(generation))
+	})
+	if err != nil {
+		_ = db.Close()
+		delete(c.dbs, projectID)
+		return fmt.Errorf("cache: bind %q: %w", projectID, err)
+	}
+
+	if wiped > 0 {
+		// Loud on purpose: reaching this means a teardown purge did not happen,
+		// and someone should know a previous tenant's data was sitting here.
+		fmt.Printf("cache: %s: discarded %d cached entr(ies) belonging to a previous generation\n",
+			projectID, wiped)
+	}
+
+	c.dbs[projectID].generation = generation
+	return nil
 }
 
 // Close releases every open bbolt handle. Safe to call once at shutdown.
@@ -84,8 +193,8 @@ func (c *BoltCache) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var firstErr error
-	for id, db := range c.dbs {
-		if err := db.Close(); err != nil && firstErr == nil {
+	for id, pdb := range c.dbs {
+		if err := pdb.db.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		delete(c.dbs, id)
