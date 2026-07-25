@@ -51,17 +51,17 @@
         {{end}}
       </ul>
       <div class="card-foot">
-        <a class="btn btn-ghost" href="/onboard/name?project={{.Project}}">
+        <a class="btn btn-ghost" href="/onboard/name?project={{.Project}}&repo={{.RepoInput}}">
           {{template "ico-arrow-left" .}} Back
         </a>
         <div class="btn-row">
-          <a class="btn" href="/onboard/checks?project={{.Project}}">Re-run checks</a>
+          <a class="btn" href="/onboard/checks?project={{.Project}}&repo={{.RepoInput}}">Re-run checks</a>
           {{if $r.Blocked}}
             <button class="btn btn-primary" aria-disabled="true" disabled>
               Continue {{template "ico-arrow-right" .}}
             </button>
           {{else}}
-            <a class="btn btn-primary" href="/onboard/review?project={{.Project}}">
+            <a class="btn btn-primary" href="/onboard/review?project={{.Project}}&repo={{.RepoInput}}">
               Continue {{template "ico-arrow-right" .}}
             </a>
           {{end}}

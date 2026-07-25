@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,17 @@ func (s *Server) wizardConnect(w http.ResponseWriter, r *http.Request) {
 	data := s.wizardData("connect", projectID)
 	data["DaemonAddr"] = s.agentDaemonAddr
 	data["CanMint"] = s.tokens != nil
-	data["RepoPath"] = strings.TrimSpace(r.FormValue("repo"))
+	// Prefilled from step 1 when that resolved to a local directory: a URL is
+	// not somewhere a file can be written.
+	repoPath := strings.TrimSpace(r.FormValue("repo"))
+	if repoPath != "" && !filepath.IsAbs(repoPath) {
+		if src := ResolveRepo(repoPath); src.LocalPath != "" {
+			repoPath = src.LocalPath
+		} else {
+			repoPath = ""
+		}
+	}
+	data["RepoPath"] = repoPath
 	data["Flash"] = r.URL.Query().Get("flash")
 	data["FlashErr"] = r.URL.Query().Get("err")
 

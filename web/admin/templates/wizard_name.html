@@ -3,20 +3,81 @@
   {{template "rail" .}}
 
   <div>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Which repository?</h2>
+          <p class="hint">Silo derives the project name from it. A local path also lets the wizard write <code>.mcp.json</code> for you later.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <form method="get" action="/onboard/name">
+          <div class="field">
+            <label class="lbl" for="repo">Repository path or URL</label>
+            <div style="display:flex; gap:8px">
+              <input type="text" id="repo" name="repo" value="{{.RepoInput}}"
+                     placeholder="/Users/you/code/myrepo   or   https://github.com/org/repo.git"
+                     autocomplete="off" spellcheck="false" autofocus>
+              <button class="btn" type="submit">Look up</button>
+            </div>
+            {{with .Repo}}
+              {{if .Problem}}<p class="err">{{.Problem}}</p>{{end}}
+            {{end}}
+            {{if not .Repo}}
+            <p class="help">
+              An absolute path on this machine, or any git clone URL. You can also skip
+              this and name the project directly below.
+            </p>
+            {{end}}
+          </div>
+        </form>
+
+        {{with .Repo}}
+          {{if .Derived}}
+          <div class="notice {{if .Normalized}}warn{{else}}ok{{end}}">
+            <span class="n-ico">{{if .Normalized}}{{template "ico-warn-tri" $}}{{else}}{{template "ico-check-circle" $}}{{end}}</span>
+            <div class="n-body">
+              {{if .Normalized}}
+                <strong>Adjusted <code>{{.RawName}}</code> to <code>{{.SuggestedID}}</code>.</strong>
+                <p>Project IDs must work as both an S3 bucket name and a filename, so they
+                  allow only lowercase letters, digits, and hyphens. Edit it below if you
+                  would rather use something else.</p>
+              {{else}}
+                <strong>Found <code>{{.RawName}}</code>.</strong>
+              {{end}}
+              {{if .RemoteURL}}<p class="mono fs-sm">{{.RemoteURL}}</p>{{end}}
+              {{if and .LocalPath (not .IsGitRepo)}}
+                <p>This directory has no <code>.git</code> — allowed, but check the path is
+                  what you meant.</p>
+              {{end}}
+            </div>
+          </div>
+          {{end}}
+        {{end}}
+      </div>
+    </div>
+
     <form method="get" action="/onboard/checks">
+      {{/* Carried forward so the Connect step can prefill the repo path and
+           offer to write .mcp.json without asking for it twice. */}}
+      <input type="hidden" name="repo" value="{{.RepoInput}}">
+
       <div class="card">
         <div class="card-head">
           <div>
-            <h2>Name the project</h2>
-            <p class="hint">This becomes the bucket name and the local cache filename. It cannot be changed later.</p>
+            <h2>Project ID</h2>
+            <p class="hint">Becomes the bucket name and the local cache filename. It cannot be changed later.</p>
           </div>
         </div>
         <div class="card-body">
           <div class="field">
-            <label class="lbl" for="project">Project ID</label>
+            <label class="lbl" for="project">
+              Project ID
+              {{if .Autofilled}}<span class="badge accent" style="margin-left:6px">derived from your repo</span>{{end}}
+            </label>
             <input class="input-lg{{if .IDError}} is-error{{end}}" type="text" id="project" name="project"
-                   value="{{.Project}}" placeholder="my-service" autofocus autocomplete="off"
-                   spellcheck="false" required>
+                   value="{{.Project}}" placeholder="my-service" autocomplete="off"
+                   spellcheck="false" required {{if not .RepoInput}}autofocus{{end}}>
             {{if .IDError}}
               <p class="err">{{.IDError}}</p>
             {{else}}
@@ -26,16 +87,15 @@
           </div>
 
           {{if .Bucket}}
-          <div class="notice info">
-            <span class="n-ico">{{template "ico-check-circle" .}}</span>
-            <div class="n-body">
-              <strong>Looks good.</strong>
-              <p>Storage bucket <code>{{.Bucket}}</code> · cache file <code>{{.CacheFile}}</code></p>
-            </div>
-          </div>
+          <dl class="summary">
+            <dt>Storage bucket</dt>
+            <dd>{{.Bucket}}</dd>
+            <dt>Local cache file</dt>
+            <dd>{{.CacheFile}}</dd>
+          </dl>
           {{end}}
 
-          <div class="notice">
+          <div class="notice" style="margin-top:16px">
             <span class="n-ico subtle">{{template "ico-alert" .}}</span>
             <div class="n-body">
               <strong>Choose carefully.</strong>

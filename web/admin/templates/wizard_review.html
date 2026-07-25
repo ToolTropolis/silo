@@ -29,11 +29,12 @@
         </dl>
       </div>
       <div class="card-foot">
-        <a class="btn btn-ghost" href="/onboard/checks?project={{.Project}}">
+        <a class="btn btn-ghost" href="/onboard/checks?project={{.Project}}&repo={{.RepoInput}}">
           {{template "ico-arrow-left" .}} Back
         </a>
         <form method="post" action="/onboard/provision" class="inline">
           <input type="hidden" name="project" value="{{.Project}}">
+          <input type="hidden" name="repo" value="{{.RepoInput}}">
           <button class="btn btn-primary btn-lg" type="submit">
             Provision {{template "ico-arrow-right" .}}
           </button>

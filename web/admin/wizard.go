@@ -21,7 +21,7 @@ var wizardSteps = []struct {
 	Label string
 	Blurb string
 }{
-	{"name", "Name", "Choose the project ID"},
+	{"name", "Repository", "Point at the repo to give memory"},
 	{"checks", "Checks", "Verify onboarding will succeed"},
 	{"review", "Review", "Confirm what will be created"},
 	{"connect", "Connect", "Wire a repo to this project"},
@@ -177,9 +177,31 @@ func (s *Server) handleWizard(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// wizardName is step 1: name the repository, not the project.
+//
+// An operator onboarding a repo is thinking about that repo, not about an
+// isolation boundary. The project ID is derived from the repo and shown for
+// approval — it is still what becomes a bucket name and a cache filename
+// permanently, so it stays editable and every transformation is visible.
 func (s *Server) wizardName(w http.ResponseWriter, r *http.Request) {
-	projectID := strings.TrimSpace(r.URL.Query().Get("project"))
+	q := r.URL.Query()
+	repoInput := strings.TrimSpace(q.Get("repo"))
+	projectID := strings.TrimSpace(q.Get("project"))
+
 	data := s.wizardData("name", projectID)
+	data["RepoInput"] = repoInput
+
+	if repoInput != "" {
+		src := ResolveRepo(repoInput)
+		data["Repo"] = src
+		// The operator's own edit wins over the derived suggestion: they may be
+		// onboarding a second project for one repo, or keeping an existing ID.
+		if projectID == "" && src.Derived() {
+			projectID = src.SuggestedID
+			data["Project"] = projectID
+			data["Autofilled"] = true
+		}
+	}
 
 	// Validate only once something has been typed, so the form does not open
 	// with an error on it.
@@ -211,6 +233,7 @@ func (s *Server) wizardChecks(w http.ResponseWriter, r *http.Request) {
 
 	data := s.wizardData("checks", projectID)
 	data["Report"] = report
+	data["RepoInput"] = strings.TrimSpace(r.FormValue("repo"))
 	s.render(w, "wizard_checks.html", data)
 }
 
@@ -226,6 +249,7 @@ func (s *Server) wizardReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := s.wizardData("review", projectID)
+	data["RepoInput"] = strings.TrimSpace(r.FormValue("repo"))
 	data["Bucket"] = "silo-" + projectID
 	data["CacheFile"] = projectID + ".bbolt"
 	data["KeyID"] = "projects/" + projectID
@@ -263,7 +287,11 @@ func (s *Server) wizardProvision(w http.ResponseWriter, r *http.Request) {
 		s.tracker.finish(projectID, s.prov.Onboard(ctx, projectID))
 	}()
 
-	http.Redirect(w, r, "/onboard/status?project="+urlEscape(projectID), http.StatusSeeOther)
+	target := "/onboard/status?project=" + urlEscape(projectID)
+	if repo := strings.TrimSpace(r.FormValue("repo")); repo != "" {
+		target += "&repo=" + urlEscape(repo)
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // wizardStatus renders provisioning progress, refreshing until it settles.
@@ -277,6 +305,7 @@ func (s *Server) wizardStatus(w http.ResponseWriter, r *http.Request) {
 
 	data := s.wizardData("review", projectID)
 	data["State"] = state
+	data["RepoInput"] = strings.TrimSpace(r.FormValue("repo"))
 	s.render(w, "wizard_status.html", data)
 }
 

@@ -102,7 +102,7 @@ func TestWizard_BlockedChecksDisableContinue(t *testing.T) {
 	if !strings.Contains(body, "disabled") {
 		t.Error("continue must be disabled when preflight blocks")
 	}
-	if strings.Contains(body, `href="/onboard/review?project=taken"`) {
+	if strings.Contains(body, `href="/onboard/review?project=taken`) {
 		t.Error("a blocked preflight must not offer a link past the checks")
 	}
 }
@@ -120,7 +120,7 @@ func TestWizard_PassingChecksOfferContinue(t *testing.T) {
 	if !strings.Contains(body, "Ready to provision") {
 		t.Error("a clean preflight should say it is ready")
 	}
-	if !strings.Contains(body, `href="/onboard/review?project=newproj"`) {
+	if !strings.Contains(body, `href="/onboard/review?project=newproj`) {
 		t.Error("a clean preflight should link to review")
 	}
 }
@@ -324,4 +324,101 @@ func firstLines(s string, n int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// Step 1 asks for the repository, because that is what an operator is thinking
+// about. The project ID is derived from it.
+func TestWizard_DerivesProjectIDFromARepoURL(t *testing.T) {
+	ts := newFixture(t, Config{Registry: &fakeRegistry{}, Settings: newFakeSettings(nil)})
+
+	body := getBody(t, ts, "/onboard/name?repo=https://github.com/org/MyService.git")
+
+	if !strings.Contains(body, `value="myservice"`) {
+		t.Error("the project ID should be prefilled from the repo name")
+	}
+	if !strings.Contains(body, "derived from your repo") {
+		t.Error("an autofilled ID should be labelled as derived")
+	}
+}
+
+// A name that had to be changed must say so: the result becomes a bucket name,
+// and an operator who does not notice will look for a bucket that is not there.
+func TestWizard_ShowsWhenTheNameWasNormalized(t *testing.T) {
+	ts := newFixture(t, Config{Registry: &fakeRegistry{}, Settings: newFakeSettings(nil)})
+
+	body := getBody(t, ts, "/onboard/name?repo=https://github.com/org/My_Service.v2.git")
+	if !strings.Contains(body, "Adjusted") {
+		t.Error("a normalized name should be reported")
+	}
+	if !strings.Contains(body, "my-service-v2") {
+		t.Errorf("the normalized ID should be shown")
+	}
+}
+
+// A name needing no change must not be reported as adjusted.
+func TestWizard_UnchangedNameIsNotReportedAsAdjusted(t *testing.T) {
+	ts := newFixture(t, Config{Registry: &fakeRegistry{}, Settings: newFakeSettings(nil)})
+
+	body := getBody(t, ts, "/onboard/name?repo=https://github.com/org/my-service.git")
+	if strings.Contains(body, "Adjusted") {
+		t.Error("nothing changed, so nothing should be reported as adjusted")
+	}
+	if !strings.Contains(body, `value="my-service"`) {
+		t.Error("the ID should still be prefilled")
+	}
+}
+
+// The derived ID is a suggestion, not a decision: an operator may be onboarding
+// a second project for one repo, or keeping an existing ID.
+func TestWizard_ExplicitProjectIDWinsOverTheDerivedOne(t *testing.T) {
+	ts := newFixture(t, Config{Registry: &fakeRegistry{}, Settings: newFakeSettings(nil)})
+
+	body := getBody(t, ts, "/onboard/name?repo=https://github.com/org/myrepo.git&project=chosen-name")
+	if !strings.Contains(body, `value="chosen-name"`) {
+		t.Error("an explicitly supplied ID must not be overwritten by derivation")
+	}
+}
+
+// A bad repo path is explained on the step rather than silently ignored.
+func TestWizard_BadRepoInputIsExplained(t *testing.T) {
+	ts := newFixture(t, Config{Registry: &fakeRegistry{}, Settings: newFakeSettings(nil)})
+
+	body := getBody(t, ts, "/onboard/name?repo=relative/path")
+	if !strings.Contains(body, "absolute") {
+		t.Error("a bad repo path should be explained")
+	}
+}
+
+// Naming a project without a repo must still work — the repo is a convenience,
+// not a requirement.
+func TestWizard_RepoIsOptional(t *testing.T) {
+	ts := newFixture(t, Config{Registry: &fakeRegistry{}, Settings: newFakeSettings(nil)})
+
+	body := getBody(t, ts, "/onboard/name?project=manual-name")
+	if !strings.Contains(body, `value="manual-name"`) {
+		t.Error("naming a project directly should still work")
+	}
+	if strings.Contains(body, "derived from your repo") {
+		t.Error("nothing was derived, so nothing should claim to be")
+	}
+}
+
+// The repo has to survive to the Connect step, or the operator would type it
+// twice.
+func TestWizard_RepoIsCarriedThroughTheFlow(t *testing.T) {
+	ts := newFixture(t, Config{
+		Registry: &fakeRegistry{}, Settings: newFakeSettings(nil),
+		Prov: &fakeProvisioner{}, CredsProbe: probeFunc(func(context.Context) error { return nil }),
+	})
+	repo := "https://github.com/org/myrepo.git"
+
+	body := getBody(t, ts, "/onboard/checks?project=myrepo&repo="+url.QueryEscape(repo))
+	if !strings.Contains(body, "repo=https") {
+		t.Error("the checks step should carry the repo forward")
+	}
+
+	body = getBody(t, ts, "/onboard/review?project=myrepo&repo="+url.QueryEscape(repo))
+	if !strings.Contains(body, `name="repo"`) {
+		t.Error("the review step should carry the repo into provisioning")
+	}
 }
