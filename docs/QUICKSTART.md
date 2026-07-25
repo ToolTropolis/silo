@@ -22,18 +22,14 @@ a memory file you wrote and read back through the API.
 
 ---
 
-## The fast path
+## Get the repo
+
+Both paths below start here:
 
 ```bash
 git clone https://github.com/ToolTropolis/silo.git
 cd silo
-
-deploy/demo.sh
 ```
-
-That starts the stack, bootstraps Vault, creates an isolated project, runs the
-daemon, then **writes and reads back a memory file** — printing every command it
-runs, so nothing is hidden. About a minute, most of it Docker.
 
 <details>
 <summary>Don't want to clone? (no Go toolchain needed either)</summary>
@@ -48,15 +44,26 @@ for f in docker-compose.yaml bootstrap-dev.sh demo.sh vault.hcl weed-docker.sh; 
   curl -fsSL "$BASE/$f" -o "deploy/$f"
 done
 chmod +x deploy/*.sh
-
-deploy/demo.sh
 ```
 
 With no sources present, `demo.sh` fetches the **released** binaries instead of
 building them — checksum-verified against the signed manifest. Same demo, no
-clone, no Go.
+clone, no Go. The fast path below then works unchanged; the manual path needs the
+sources, so clone for that one.
 
 </details>
+
+---
+
+## The fast path
+
+```bash
+deploy/demo.sh
+```
+
+Starts the stack, bootstraps Vault, creates an isolated project, runs the daemon,
+then **writes and reads back a memory file** — printing every command it runs, so
+nothing is hidden. About a minute, most of it Docker.
 
 At the end you get a dashboard URL where that file already has two versions.
 Tear it down with `deploy/demo.sh --down`.
@@ -69,8 +76,6 @@ Tear it down with `deploy/demo.sh --down`.
 hand — six steps, two terminals, ~5 minutes. Worth doing once: it's what you'd
 actually run against a real deployment, where none of the dev-stack defaults
 apply.
-
-Assumes you've already cloned the repo and are in it.
 
 ## 1. Start the stack (~1 min)
 
