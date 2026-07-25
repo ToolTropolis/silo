@@ -10,6 +10,7 @@ import (
 
 	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/kms"
+	"github.com/tooltropolis/silo/internal/project"
 	"github.com/tooltropolis/silo/internal/registry"
 )
 
@@ -49,8 +50,10 @@ func bucketName(projectID string) string { return "silo-" + projectID }
 // a rollback that itself partially fails is reported alongside the original
 // error so an operator can finish teardown by hand.
 func (o *Onboarder) Onboard(ctx context.Context, projectID string) (err error) {
-	if projectID == "" {
-		return fmt.Errorf("admin: empty projectID")
+	// Onboarding is the authoritative gate: a project that gets past here will
+	// have its ID baked into a bucket name and a cache filename for good.
+	if err := project.ValidateID(projectID); err != nil {
+		return fmt.Errorf("admin: %w", err)
 	}
 	bucket := bucketName(projectID)
 

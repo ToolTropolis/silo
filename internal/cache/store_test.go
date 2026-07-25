@@ -3,6 +3,8 @@ package cache
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -156,5 +158,42 @@ func TestReopenPersistsData(t *testing.T) {
 	}
 	if string(got) != "durable" {
 		t.Fatalf("persisted content: want %q, got %q", "durable", got)
+	}
+}
+
+// TestBoltCache_RejectsUnsafeProjectID is the traversal guard. projectID is
+// concatenated into a filename, so an ID like "../escape" would create a bbolt
+// file outside the cache directory entirely. Assert both that the call fails
+// and that nothing was written outside the base dir.
+func TestBoltCache_RejectsUnsafeProjectID(t *testing.T) {
+	parent := t.TempDir()
+	baseDir := filepath.Join(parent, "cache")
+
+	c, err := NewBoltCache(baseDir)
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+	for _, bad := range []string{"../escape", "..", "a/b", "Repo1", "", "a_b"} {
+		if err := c.Put(ctx, bad, "memory/x.md", []byte("nope")); err == nil {
+			t.Errorf("Put with projectID %q should be rejected", bad)
+		}
+		if _, err := c.Get(ctx, bad, "memory/x.md"); err == nil {
+			t.Errorf("Get with projectID %q should be rejected", bad)
+		}
+	}
+
+	// Nothing may exist outside the cache dir — a created file here would mean
+	// the ID escaped despite the error.
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "cache" {
+			t.Errorf("traversal created %q outside the cache directory", e.Name())
+		}
 	}
 }

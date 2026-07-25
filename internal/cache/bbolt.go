@@ -11,6 +11,8 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/tooltropolis/silo/internal/project"
 )
 
 // Bucket names within each project's bbolt file.
@@ -45,8 +47,12 @@ func NewBoltCache(baseDir string) (*BoltCache, error) {
 // buckets. Handles are cached so concurrent callers share one *bolt.DB, which
 // bbolt serializes internally.
 func (c *BoltCache) db(projectID string) (*bolt.DB, error) {
-	if projectID == "" {
-		return nil, fmt.Errorf("cache: empty projectID")
+	// Validate before the ID reaches filepath.Join below. This is defence in
+	// depth — onboarding already rejects bad IDs — but it is the last point
+	// before an ID becomes a real path, and "../escape" here would create a
+	// bbolt file outside the cache directory entirely.
+	if err := project.ValidateID(projectID); err != nil {
+		return nil, fmt.Errorf("cache: %w", err)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
