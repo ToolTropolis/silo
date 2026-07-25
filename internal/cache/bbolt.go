@@ -212,6 +212,70 @@ func (c *BoltCache) DrainQueue(ctx context.Context, projectID string) ([]Pending
 	return writes, nil
 }
 
+// QueueDepth reports how many writes are buffered for a project without
+// consuming them.
+//
+// This exists because DrainQueue is destructive: it empties the bucket in the
+// same transaction that reads it, so the only way to count the backlog was to
+// destroy it. An operator asking "is it safe to shut down?" would have caused
+// the data loss they were checking for.
+//
+// Read-only (db.View) and O(1)-ish via bucket statistics rather than walking and
+// unmarshalling every entry, since callers only want the count.
+func (c *BoltCache) QueueDepth(ctx context.Context, projectID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	db, err := c.db(projectID)
+	if err != nil {
+		return 0, err
+	}
+	var depth int
+	err = db.View(func(tx *bolt.Tx) error {
+		depth = tx.Bucket(queueBucket).Stats().KeyN
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("cache: queue depth %q: %w", projectID, err)
+	}
+	return depth, nil
+}
+
+// OldestQueued returns the QueuedAt stamp of the oldest buffered write, or ""
+// when the queue is empty.
+//
+// Depth alone is hard to act on: "12 pending" reads very differently from "12
+// pending, oldest 3 hours ago". Deliberately not on the LocalCache interface —
+// it is a reporting nicety, and the interface should stay minimal.
+func (c *BoltCache) OldestQueued(ctx context.Context, projectID string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	db, err := c.db(projectID)
+	if err != nil {
+		return "", err
+	}
+	var oldest string
+	err = db.View(func(tx *bolt.Tx) error {
+		// Keys are a monotonic big-endian sequence, so the first key is the
+		// oldest entry — no scan needed.
+		_, v := tx.Bucket(queueBucket).Cursor().First()
+		if v == nil {
+			return nil
+		}
+		var w PendingWrite
+		if err := json.Unmarshal(v, &w); err != nil {
+			return fmt.Errorf("unmarshal pending write: %w", err)
+		}
+		oldest = w.QueuedAt
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("cache: oldest queued %q: %w", projectID, err)
+	}
+	return oldest, nil
+}
+
 // itob encodes a uint64 sequence as an 8-byte big-endian key so bbolt's
 // byte-order iteration matches numeric order.
 func itob(v uint64) []byte {
