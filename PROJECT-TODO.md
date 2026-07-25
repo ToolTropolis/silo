@@ -1,9 +1,9 @@
 # Silo — project TODO
 
-Status as of 2026-07-25. Written after two days of work in which the storage,
-isolation, caching, and admin layers were built and verified end to end, and the
-thing they exist to serve — **an agent in a repo actually using Silo** — turned
-out not to exist at all.
+Status as of 2026-07-25. Written after two days of work on the storage,
+isolation, caching, and admin layers, at the point where the thing they exist to
+serve — **an agent in a repo actually using Silo** — turned out not to exist.
+That gap is now closed; see the headline.
 
 This file is the honest inventory: what works, what is missing, and what order
 to fix it in.
@@ -12,26 +12,31 @@ to fix it in.
 
 ## The headline
 
-**You cannot yet point Silo at a repo and have an agent use it.**
+**Closed (2026-07-25): an agent can now use Silo as memory.**
 
-There is no repo linkage anywhere in the system. Verified: no `repo`, `git`,
-`url`, or `clone` field exists in any migration, and `ProjectRecord` carries
-only `ProjectID`, `BucketName`, `CredentialID`, `KeyID`, `CreatedAt`, `Status`,
-`Generation`.
+`cmd/silo-mcp` exposes one project's memory over the Model Context Protocol, so
+any MCP-speaking runtime picks up four tools from a `.mcp.json` entry. Verified
+live, end to end:
 
-A "project" is an **isolation boundary**, not a repo. The only thing binding a
-repo to Silo is a naming convention plus a token:
+- a memory written in one session is read back by a **separate process**;
+- a second project **cannot** read, list, or search the first one's memory,
+  while its own memory still works.
+
+Both are covered by `internal/mcpserver/e2e_live_test.go`, which skips when no
+daemon is reachable. Sabotage-checked: handing project B project A's token makes
+all three isolation assertions fail.
+
+A "project" is still an **isolation boundary**, not a repo — Silo stores no
+`repo_url` or path, and the binding is a token plus a naming convention:
 
 ```
 project ID "myrepo"  ->  bucket silo-myrepo + key + credential + cache file
-       token "myrepo-token=myrepo"   <- the entire linkage
-       agent calls POST /v1/write with that token
+       token in .mcp.json env       <- the entire linkage
+       agent calls silo_read / silo_write via silo-mcp
 ```
 
-Silo never sees the repo. `docs/onboarding-a-repo.md` §"Wiring an agent" lists
-three integration sketches and states plainly that they are **not verified
-against current framework APIs**. That gap predates this session; everything
-built on top of it is real, and none of it closes it.
+Recording *which* repo a project belongs to is still open (P1/4 below), but that
+is metadata for humans, not a functional gap.
 
 ---
 
@@ -49,32 +54,37 @@ built on top of it is real, and none of it closes it.
 | Console-driven cache policy, no daemon restart | live, daemon started with zero flags |
 | Onboarding wizard with preflight + per-layer rollback display | live, incl. forced failure |
 | Admin console: cache, policy, projects, teardown | live |
+| **Agent memory over MCP** (`silo-mcp`) | live: separate processes, 4 tools |
+| **Memory survives the session that wrote it** | `TestLive_MemorySurvivesTheSession` |
+| **Cross-project isolation over MCP** (read/list/search) | `TestLive_ProjectsCannotReadEachOther` |
 
-Test suite: 15 packages green under `-race`, clean `vet` and `gofmt`.
+Test suite: 16 packages green under `-race`, clean `vet` and `gofmt`.
 
 ---
 
 ## Pending work, in dependency order
 
-### P0 — Make Silo usable from a repo *(nothing else matters until this ships)*
+### P0 — Make Silo usable from a repo — **DONE**
 
-- [ ] **1. MCP server (`cmd/silo-mcp`)** — the missing product.
-      Wrap the four daemon endpoints (`read`/`write`/`list`/`search`) as MCP
-      tools so an agent calls Silo naturally. ~300 lines. `docs/onboarding-a-repo.md`
-      already names this as "likely the best fit".
-      - [ ] Decide the target agent runtime first (Claude Code? something else?) —
-            this determines whether MCP is even the right protocol.
-      - [ ] Tool schemas: `silo_read`, `silo_write`, `silo_list`, `silo_search`.
-      - [ ] Token comes from config/env; one server instance serves one project,
-            matching the daemon's one-token-one-project boundary.
-      - [ ] Decide whether `write` exposes `SafeWrite`'s CAS semantics or hides them.
-- [ ] **2. Wizard emits real agent config**, not curl commands.
-      The final step should produce the `.mcp.json` (or equivalent) block for the
-      project's token, ready to paste — and optionally write it into a repo path
-      the operator names.
-- [ ] **3. End-to-end smoke test**: onboard a project, wire an agent in a scratch
-      repo, have it write a memory, restart the agent, have it read that memory
-      back. This is the acceptance test the project currently has no equivalent of.
+- [x] **1. MCP server (`cmd/silo-mcp`)** — built on the official
+      `github.com/modelcontextprotocol/go-sdk` v1.6.1. Four tools over stdio,
+      a thin adapter on `pkg/client` so the daemon HTTP API stays the stable
+      contract. 14 unit tests through the SDK's in-memory transport.
+- [x] **2. Wizard emits real agent config** — the final step now prints a
+      project-scoped `.mcp.json` with the token as `${SILO_TOKEN}`, so it is
+      never inlined into a file that gets committed.
+- [x] **3. End-to-end acceptance test** — `internal/mcpserver/e2e_live_test.go`
+      proves persistence across sessions and cross-project isolation against a
+      live stack.
+
+Remaining P0-adjacent polish:
+
+- [ ] **1a. Decide whether `silo_write` should expose CAS semantics.** Today it
+      hides them: a write replaces the whole file and the tool description says
+      so. If two agents write the same path concurrently the daemon's retry
+      resolves it, but the losing agent is never told its read was stale.
+- [ ] **1b. Ship `silo-mcp` in the installer and `deploy/demo.sh`**, so the
+      quickstart ends with a working agent rather than a curl call.
 
 ### P1 — Close the repo-metadata gap
 
@@ -138,9 +148,12 @@ Test suite: 15 packages green under `-race`, clean `vet` and `gofmt`.
 
 ## Recommended next action
 
-Ship **P0 item 1** (the MCP server) as the single next piece of work, then item 3
-(the end-to-end test) to prove it. Do not add more console features until a repo
-can actually talk to Silo.
+P0 is done: a repo can talk to Silo. The highest-value follow-ups now are
+**1b** (ship `silo-mcp` in the demo so the quickstart ends with a working agent)
+and **7** (`silo-admin` is undocumented and has no browser story), because both
+are gaps between "it works" and "someone else can use it".
 
-Everything in P1–P4 is genuinely deferrable. P0 is not — without it, the
-isolation, caching, and consolidation machinery has no consumer.
+**4** is worth doing cheaply — recording which repo a project belongs to costs
+one migration and answers an obvious question the console currently cannot.
+
+Everything else in P1–P4 is genuinely deferrable.

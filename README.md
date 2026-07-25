@@ -45,7 +45,8 @@ Three zones (full diagram and narrative in
 ## Repository layout
 
 ```
-cmd/          silod (daemon), siloctl (admin CLI), silo-distil, silo-dashboard
+cmd/          silod (daemon), siloctl (admin CLI), silo-distil, silo-dashboard,
+              silo-admin (operator console), silo-mcp (MCP server for agents)
 internal/     cache, backend, registry, kms, daemon, transcript, distilator, admin
 pkg/client/   agent-facing SDK (Read/Write/List/Search) + framework adapters
 web/dashboard v1 read/review web surface
@@ -129,9 +130,10 @@ To give one of your repositories its own isolated memory silo — provisioning,
 running the daemon, and reading/writing its memory — follow
 [`docs/onboarding-a-repo.md`](docs/onboarding-a-repo.md).
 
-Note that there is **no agent-framework adapter yet**: the SDK exists, but
-nothing in Claude Code (or any other framework) calls it automatically. The
-guide covers what works today and sketches the integration options.
+Agents reach Silo over the **Model Context Protocol**: `silo-mcp` exposes one
+project's memory as four tools (`silo_read`, `silo_write`, `silo_list`,
+`silo_search`), so any MCP-speaking runtime picks them up from a `.mcp.json`
+entry — no file sync and no framework-specific hooks. The guide has the config.
 
 ## Exercising the full cycle by hand
 

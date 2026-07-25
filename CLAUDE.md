@@ -27,7 +27,9 @@ stays green without it.
 
 ## Layout
 
-- `cmd/` — `silod` (daemon), `siloctl` (admin CLI), `silo-distil` (Distilator runner).
+- `cmd/` — `silod` (daemon), `siloctl` (admin CLI), `silo-distil` (Distilator runner),
+  `silo-admin` (operator console), `silo-mcp` (exposes a project's memory to an
+  agent over MCP — this is how a repo actually connects to Silo).
 - `internal/cache` — bbolt local fast path + offline write queue (`LocalCache`).
 - `internal/backend` — durable storage (`DurableBackend`); SeaweedFS adapter is default.
 - `internal/registry` — tenant registry on rqlite (`TenantRegistry`).
@@ -37,6 +39,8 @@ stays green without it.
 - `internal/admin` — onboarding (automated) + teardown (manual, per-layer).
 - `pkg/client` — agent-facing SDK (`Read`/`Write`/`List`/`Search`).
 - `web/dashboard` — v1 read/review web surface.
+- `web/admin` — operator console: cache policy, onboarding wizard, teardown.
+- `internal/mcpserver` — the MCP tool layer over `pkg/client`.
 
 ## Conventions & rules from the spec
 

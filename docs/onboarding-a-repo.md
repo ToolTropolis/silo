@@ -199,19 +199,71 @@ OAuth profile — `ant auth status` shows which source is active.
 
 ---
 
-## Integrating with an agent framework
+## Wiring an agent to Silo (MCP)
 
-**Not built yet.** The SDK exists; nothing calls it automatically. Options, in
-rough order of how well they fit:
+`silo-mcp` exposes one project's memory over the **Model Context Protocol**, so
+an agent runtime launches it as a subprocess and calls four tools. No file sync,
+no framework hooks, no port opened.
+
+```bash
+go build -o ./bin/silo-mcp ./cmd/silo-mcp
+```
+
+Add `.mcp.json` to the repo you want to give memory to:
+
+```json
+{
+  "mcpServers": {
+    "silo": {
+      "command": "silo-mcp",
+      "env": {
+        "SILO_TOKEN": "${SILO_TOKEN}",
+        "SILO_PROJECT": "myrepo",
+        "SILO_DAEMON_ADDR": "http://127.0.0.1:8500"
+      }
+    }
+  }
+}
+```
+
+`${SILO_TOKEN}` is expanded from your shell at launch, so the token never lands
+in a file you might commit — set it with `export SILO_TOKEN=…`. The rest of the
+file is safe to check in.
+
+Restart the agent and it discovers:
+
+| Tool | What it does |
+|---|---|
+| `silo_read` | Recall a memory file written in an earlier session |
+| `silo_write` | Store a memory file (replaces the whole file, so read first) |
+| `silo_list` | Discover what has been remembered for this project |
+| `silo_search` | Find a specific fact without reading everything |
+
+**One server serves exactly one project.** The token resolves to one project on
+the daemon, so a server holding project A's token cannot reach project B's
+memory even if a tool call asks it to. Give a second repo its own project, its
+own token, and its own `.mcp.json` entry.
+
+Both properties are covered by an acceptance test
+(`internal/mcpserver/e2e_live_test.go`) that runs against a live stack:
+
+```bash
+SILO_TEST_TOKEN_A=<project-a-token> SILO_TEST_TOKEN_B=<project-b-token> \
+  go test ./internal/mcpserver/ -run TestLive -v
+```
+
+It proves memory survives the session that wrote it, and that a second project
+cannot read, list, or search the first one's memory. The test skips when no
+daemon is reachable, so `go test ./...` stays green without the stack.
+
+### Other integration shapes
+
+Not built, and not needed for an MCP-speaking runtime:
 
 | Approach | Notes |
 |---|---|
-| **MCP server** wrapping the daemon API | Likely the best fit — exposes read/write/list/search as tools an agent calls naturally. Needs a new server binary. |
-| **File sync** (`pull` / `push`) | Materialize Silo memory into the repo's agent-memory files before a session and write changes back after. Least elegant, but works with today's tooling and needs no new protocol. |
-| **Framework hooks** | Where the framework exposes session-start/stop hooks, useful for one-directional sync. Cannot serve reads mid-session. |
-
-These are design sketches, **not verified against current framework APIs**.
-Confirm the integration points before building against them.
+| **File sync** (`pull` / `push`) | Materialize Silo memory into the repo's agent-memory files before a session and write changes back after. Works with tooling that cannot speak MCP. |
+| **Framework hooks** | Where a framework exposes session-start/stop hooks, useful for one-directional sync. Cannot serve reads mid-session. |
 
 ---
 
