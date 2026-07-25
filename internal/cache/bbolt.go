@@ -63,6 +63,12 @@ func NewBoltCache(baseDir string) (*BoltCache, error) {
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cache: create base dir: %w", err)
 	}
+	// A compaction interrupted by a crash leaves a temp copy behind. Left alone
+	// it would double that project's disk usage indefinitely, which is the
+	// opposite of what compaction is for.
+	if err := sweepCompactLeftovers(baseDir); err != nil {
+		return nil, err
+	}
 	return &BoltCache{
 		baseDir:     baseDir,
 		openTimeout: defaultOpenTimeout,

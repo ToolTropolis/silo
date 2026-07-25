@@ -144,6 +144,21 @@ func (d *Daemon) CacheStats(ctx context.Context, projectID string) (cache.CacheS
 	return evictor.Stats(ctx, projectID)
 }
 
+// cacheCompactor is implemented by caches that can reclaim their own disk.
+type cacheCompactor interface {
+	Compact(ctx context.Context, projectID string) (cache.CompactResult, error)
+}
+
+// CompactCache rewrites a project's cache file to return the disk that eviction
+// freed but bbolt kept. Refuses while writes are queued — see cache.Compact.
+func (d *Daemon) CompactCache(ctx context.Context, projectID string) (cache.CompactResult, error) {
+	compactor, ok := d.cache.(cacheCompactor)
+	if !ok {
+		return cache.CompactResult{}, fmt.Errorf("daemon: compact %q: cache does not support compaction", projectID)
+	}
+	return compactor.Compact(ctx, projectID)
+}
+
 // oldestQueuer is implemented by caches that can report the head of the queue.
 // Kept off LocalCache: the timestamp is a reporting nicety, and the interface is
 // the contract every implementation must satisfy.
