@@ -57,6 +57,12 @@ type PendingWrite struct {
 // ErrNotFound is returned by Get when no entry exists at the path.
 var ErrNotFound = errors.New("cache: entry not found")
 
+// ErrCacheLocked is returned when another process holds the bbolt lock on a
+// project's cache file. Two Silo processes sharing a cache directory is a
+// configuration mistake, not a transient condition, so it is named rather than
+// surfaced as an opaque timeout.
+var ErrCacheLocked = errors.New("cache: file is locked by another process")
+
 // ErrNoGeneration is returned by BindProject when the caller has no generation
 // to check against. It is deliberately an error rather than a permissive
 // default: binding with an empty generation would make every file match, which

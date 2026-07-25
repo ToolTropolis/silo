@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,12 +26,20 @@ var (
 // generationKey records which incarnation of a project owns this cache file.
 var generationKey = []byte("generation")
 
+// defaultOpenTimeout bounds the wait for another process's file lock. Long
+// enough to ride out a brief handover, short enough that a misconfiguration
+// surfaces quickly.
+const defaultOpenTimeout = 5 * time.Second
+
 // BoltCache is the default LocalCache. It keeps one bbolt file per project under
 // a base directory (opened lazily on first use) with a content bucket for the
 // warm cache and an append-only queue bucket for writes buffered while the
 // durable backend was unreachable.
 type BoltCache struct {
 	baseDir string
+	// openTimeout bounds how long we wait for another process to release a
+	// project's file lock. Overridable so tests don't pay the full wait.
+	openTimeout time.Duration
 
 	mu  sync.Mutex
 	dbs map[string]*projectDB // projectID -> open handle
@@ -51,7 +60,11 @@ func NewBoltCache(baseDir string) (*BoltCache, error) {
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cache: create base dir: %w", err)
 	}
-	return &BoltCache{baseDir: baseDir, dbs: make(map[string]*projectDB)}, nil
+	return &BoltCache{
+		baseDir:     baseDir,
+		openTimeout: defaultOpenTimeout,
+		dbs:         make(map[string]*projectDB),
+	}, nil
 }
 
 // db opens (once) and returns the bbolt handle for a project, initializing its
@@ -78,8 +91,15 @@ func (c *BoltCache) openLocked(projectID string) (*bolt.DB, error) {
 		return pdb.db, nil
 	}
 	path := filepath.Join(c.baseDir, projectID+".bbolt")
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: c.openTimeout})
 	if err != nil {
+		// A timeout here almost always means another Silo process already owns
+		// this cache directory — bbolt locks each file exclusively. Say so:
+		// a bare five-second timeout gives no hint where to look.
+		if errors.Is(err, bolt.ErrTimeout) {
+			return nil, fmt.Errorf("cache: open %s: %w (another process — silod? — already owns this cache directory)",
+				path, ErrCacheLocked)
+		}
 		return nil, fmt.Errorf("cache: open %s: %w", path, err)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
