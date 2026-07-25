@@ -128,7 +128,7 @@ func TestSyncProject_DrainsQueuedWritesAfterRecovery(t *testing.T) {
 	writes := map[string]string{"a.md": "AAA", "b.md": "BBB", "c.md": "CCC"}
 	for path, content := range writes {
 		c := content
-		if err := d.SafeWrite(ctx, proj, path, func([]byte) []byte { return []byte(c) }, "agent", "s1"); err != nil {
+		if _, err := d.SafeWrite(ctx, proj, path, func([]byte) []byte { return []byte(c) }, "agent", "s1"); err != nil {
 			t.Fatalf("SafeWrite while down should queue, got: %v", err)
 		}
 	}
@@ -180,7 +180,7 @@ func TestSyncProject_ReEnqueuesOnReplayFailure(t *testing.T) {
 	// Queue two writes while down.
 	be.setDown(true)
 	for _, p := range []string{"x.md", "y.md"} {
-		if err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte("v") }, "a", "s"); err != nil {
+		if _, err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte("v") }, "a", "s"); err != nil {
 			t.Fatalf("enqueue %s: %v", p, err)
 		}
 	}
@@ -251,7 +251,7 @@ func TestSyncProject_DoesNotDoubleEnqueueOnMidDrainOutage(t *testing.T) {
 	// Queue three writes while the backend is down.
 	inner.setDown(true)
 	for _, p := range []string{"memory/a.md", "memory/b.md", "memory/c.md"} {
-		if err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte(p) }, "agent", "s1"); err != nil {
+		if _, err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte(p) }, "agent", "s1"); err != nil {
 			t.Fatalf("queueing write %s: %v", p, err)
 		}
 	}
