@@ -20,6 +20,10 @@ stack.
 
 - Go 1.26+, Docker
 - The dev stack running and bootstrapped (below)
+- `weed`, the SeaweedFS CLI — onboarding issues the project's bucket-scoped S3
+  credential through it. Against the Docker stack, run it inside the container;
+  a host-native `weed` cannot reach the container addresses SeaweedFS advertises.
+  See [QUICKSTART.md](QUICKSTART.md#prerequisites).
 
 Throughout, replace `myrepo` with your project ID. Use something stable and
 DNS-safe — it becomes the bucket name (`silo-myrepo`).

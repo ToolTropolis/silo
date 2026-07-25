@@ -19,6 +19,26 @@ a memory file you wrote and read back through the API.
 | Go 1.26+ | `go version` | [go.dev/dl](https://go.dev/dl/) |
 | Docker | `docker ps` | Docker Desktop, and make sure it's *running* |
 | `jq` (for the examples) | `jq --version` | `brew install jq` |
+| `weed` (onboarding only) | `weed version` | `brew install seaweedfs`, or see the note below |
+
+**About `weed`.** Onboarding a project issues a *per-project S3 credential*, scoped
+`Read,Write` to that project's bucket alone — the isolation boundary Silo enforces.
+Creating that identity is not an S3 API call; it goes through SeaweedFS's own admin
+channel (`weed shell` → `s3.configure`), so `siloctl onboard` needs the `weed` binary.
+Reads and writes never touch it, so a daemon serving memory does not need it at all.
+
+Against the Docker dev stack there is a wrinkle: SeaweedFS advertises its
+*container* address (e.g. `172.24.0.2:9333`), which a `weed` running on your host
+cannot route to — it will hang rather than fail. So run it inside the container:
+
+```sh
+SW=$(docker compose -f deploy/docker-compose.yaml ps -q seaweedfs)
+docker exec -i "$SW" weed shell -master=localhost:9333
+```
+
+`deploy/demo.sh` already does the equivalent, which is why the demo path needs no
+`weed` on your PATH. Install it natively when you point Silo at a SeaweedFS cluster
+whose advertised addresses you can actually reach.
 
 ---
 

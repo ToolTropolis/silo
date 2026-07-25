@@ -73,6 +73,10 @@ and building from source.
 
 - **Go 1.26+**
 - **Docker** (for the local dependency stack)
+- **`weed`** (SeaweedFS CLI) — *only* to onboard a project, which issues its
+  bucket-scoped S3 credential via `weed shell`. `brew install seaweedfs`, or run it
+  inside the dev-stack container (see [docs/QUICKSTART.md](docs/QUICKSTART.md#prerequisites)).
+  Serving memory never needs it.
 
 ## Running the stack locally
 
