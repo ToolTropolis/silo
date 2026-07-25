@@ -54,6 +54,7 @@ is metadata for humans, not a functional gap.
 | Console-driven cache policy, no daemon restart | live, daemon started with zero flags |
 | Onboarding wizard with preflight + per-layer rollback display | live, incl. forced failure |
 | Admin console: cache, policy, projects, teardown | live |
+| **Agent tokens**: mint, list, revoke, hashed at rest | live: minted -> 200 -> revoked -> 401 |
 | **Agent memory over MCP** (`silo-mcp`) | live: separate processes, 4 tools |
 | **Memory survives the session that wrote it** | `TestLive_MemorySurvivesTheSession` |
 | **Cross-project isolation over MCP** (read/list/search) | `TestLive_ProjectsCannotReadEachOther` |
@@ -79,6 +80,9 @@ Test suite: 16 packages green under `-race`, clean `vet` and `gofmt`.
 
 Remaining P0-adjacent polish:
 
+- [x] **Agent tokens** — minted from the console, verified against the registry
+      without a daemon restart, revocable, and revoked automatically by teardown.
+      `--tokens` is now optional rather than the only way in.
 - [ ] **1a. Decide whether `silo_write` should expose CAS semantics.** Today it
       hides them: a write replaces the whole file and the tool description says
       so. If two agents write the same path concurrently the daemon's retry

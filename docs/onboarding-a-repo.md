@@ -4,15 +4,12 @@ How to give one of your repositories its own isolated memory silo, and read and
 write that memory. Everything here has been run end to end against the dev
 stack.
 
-> **Scope — read this first.** There is **no Claude Code (or other framework)
-> adapter yet**. `pkg/client/adapters/` is empty; the spec parks per-framework
-> adapters there as "added as built," and none have been. Nothing in your agent
-> framework will automatically read or write Silo memory today.
->
-> What this guide gets you: a real, isolated Silo project for your repo, plus
-> read/write/list/search access over HTTP or the Go SDK. Wiring that into an
-> agent framework is a separate piece of work — see
-> [Integrating with an agent framework](#integrating-with-an-agent-framework).
+> **Scope.** Agents reach Silo over the **Model Context Protocol**: `silo-mcp`
+> exposes a project's memory as four tools, so any MCP-speaking runtime picks
+> them up from a `.mcp.json` entry — see
+> [Wiring an agent to Silo](#wiring-an-agent-to-silo-mcp). Steps 1–4 below set up
+> the project and show the raw HTTP/Go SDK surface underneath; skip to the MCP
+> section if you only want to connect a repo.
 
 ---
 
@@ -110,8 +107,11 @@ token resolves to exactly one project** — that is the authorization boundary.
 A caller holding `myrepo-token` cannot reach another project's memory no matter
 what it puts in the request.
 
-> Use a real secret in anything but local dev. These tokens are the only thing
-> standing between a caller and a project's memory.
+> For anything but a quick local test, mint tokens from the console instead and
+> start the daemon with `--rqlite` (see
+> [Where the token comes from](#where-the-token-comes-from)). Registry-issued
+> tokens are revocable and are stored only as hashes; a `--tokens` value is
+> visible in the process list and needs a restart to change.
 
 For same-machine agents, pass a path instead of `host:port` to listen on a Unix
 socket: `--listen /var/run/silo.sock`.
@@ -229,6 +229,30 @@ Add `.mcp.json` to the repo you want to give memory to:
 `${SILO_TOKEN}` is expanded from your shell at launch, so the token never lands
 in a file you might commit — set it with `export SILO_TOKEN=…`. The rest of the
 file is safe to check in.
+
+### Where the token comes from
+
+Mint one from the console — the onboarding wizard's **Connect** step, or a
+project's page under **Projects → Manage**. It is shown **once**: only a SHA-256
+hash is stored, so a leaked registry dump yields nothing usable, and the token
+cannot be retrieved afterwards. Lost it? Mint another and revoke the old one.
+
+Give each machine or CI job its own labelled token, so a single leak is revoked
+without disturbing anything else.
+
+A daemon started with `--rqlite` verifies these without a restart:
+
+```bash
+silod --rqlite http://localhost:4001 --listen 127.0.0.1:8500
+```
+
+`--tokens` still works and is checked first, which keeps the dev flow going even
+if the registry is briefly unreachable. Verified tokens are cached for
+`--token-cache-ttl` (default 1m) — that is the window in which a revoked token
+still works, so shorten it if you want revocation to bite faster.
+
+Teardown revokes a project's tokens at `revoke-credential`, the first step, so
+they cannot outlive the project they address.
 
 Restart the agent and it discovers:
 
