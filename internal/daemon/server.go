@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -32,6 +33,30 @@ func (s StaticTokenVerifier) ProjectFor(token string) (string, error) {
 		return p, nil
 	}
 	return "", ErrUnauthorized
+}
+
+// Projects returns the distinct projects this verifier grants access to, sorted.
+//
+// Deliberately a method on the concrete type rather than on TokenVerifier: the
+// interface is the authorization boundary and should stay minimal, and a future
+// database-backed verifier should not be forced to enumerate every tenant.
+//
+// The sync worker uses this to learn which projects it owns. That is sound while
+// tokens are the only way to write — no token means no writes means no queue —
+// but it does mean a project whose token was rotated away mid-outage would stop
+// being drained. Switch to registry.List once the registry is wired into silod.
+func (s StaticTokenVerifier) Projects() []string {
+	seen := make(map[string]struct{}, len(s))
+	out := make([]string, 0, len(s))
+	for _, projectID := range s {
+		if _, dup := seen[projectID]; dup {
+			continue
+		}
+		seen[projectID] = struct{}{}
+		out = append(out, projectID)
+	}
+	sort.Strings(out) // stable startup logging
+	return out
 }
 
 // Server exposes the daemon's Read/Write/List/Search operations over HTTP for

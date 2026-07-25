@@ -4,10 +4,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/cache"
@@ -32,6 +38,8 @@ func run(args []string) error {
 	accessKey := fs.String("s3-access-key", backend.RuntimeEnv("SILO_S3_ACCESS_KEY", "SILO_RUNTIME_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY / SILO_RUNTIME_ACCESS_KEY)")
 	secretKey := fs.String("s3-secret-key", backend.RuntimeEnv("SILO_S3_SECRET_KEY", "SILO_RUNTIME_SECRET_KEY"), "S3 secret key (or SILO_S3_SECRET_KEY / SILO_RUNTIME_SECRET_KEY)")
 	tokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs the SDK authenticates with (or SILO_TOKENS)")
+	syncInterval := fs.Duration("sync-interval", daemon.DefaultSyncInterval, "how often to replay locally-queued writes to the backend")
+	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests and a final queue drain on shutdown")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -84,8 +92,73 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("silod: listening on %s (%d token(s))\n", *listen, len(verifier))
-	return srv.Serve(ln)
+
+	// Stop on SIGINT/SIGTERM rather than being killed outright. Without this the
+	// process dies mid-drain, `defer localCache.Close()` never runs, and buffered
+	// writes are left behind with no clean close of the bbolt files.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	projects := verifier.Projects()
+	worker := daemon.NewSyncWorker(d, projects, *syncInterval, func(format string, args ...any) {
+		fmt.Printf(format+"\n", args...)
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		worker.Run(ctx)
+	}()
+
+	httpSrv := &http.Server{Handler: srv.Handler()}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- httpSrv.Serve(ln) }()
+
+	fmt.Printf("silod: listening on %s (%d token(s), %d project(s), syncing every %s)\n",
+		*listen, len(verifier), len(projects), *syncInterval)
+
+	select {
+	case err := <-serveErr:
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+	}
+
+	fmt.Println("silod: shutting down")
+
+	// Stop accepting requests BEFORE draining. Draining first would race new
+	// writes into the queue for as long as the drain takes.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		fmt.Printf("silod: http shutdown: %v\n", err)
+	}
+
+	wg.Wait() // the ticker goroutine observes the cancelled ctx
+
+	// One last drain so a clean stop doesn't strand writes on local disk. Bounded
+	// so a dead backend can't block shutdown indefinitely.
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), *shutdownTimeout)
+	defer cancelFlush()
+	worker.SyncOnce(flushCtx)
+
+	// Report anything still buffered — the operator needs to know this host holds
+	// data that never reached the backend.
+	for _, projectID := range projects {
+		depth, err := d.QueueDepth(flushCtx, projectID)
+		if err != nil {
+			fmt.Printf("silod: %s: could not read queue depth: %v\n", projectID, err)
+			continue
+		}
+		if depth > 0 {
+			fmt.Printf("silod: WARNING %s has %d unsynced write(s) still in %s\n",
+				projectID, depth, *cacheDir)
+		}
+	}
+	return nil
 }
 
 // parseTokens turns "tok1=projA,tok2=projB" into a verifier. Each token is
