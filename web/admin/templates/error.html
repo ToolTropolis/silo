@@ -1,0 +1,28 @@
+{{define "error.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silo admin — error</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/console.css">
+</head>
+<body>
+<div class="content" style="max-width:720px;margin:56px auto">
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>The {{.View}} view is unavailable</h2>
+        <p class="hint">A dependency this page needs could not be reached.</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <pre class="snippet">{{.Error}}</pre>
+    </div>
+    <div class="card-foot">
+      <a class="btn btn-ghost" href="/">Back to the console</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>{{end}}

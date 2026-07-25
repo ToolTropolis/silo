@@ -42,6 +42,19 @@ type Onboarder struct {
 	// purger warns rather than failing, so teardown still works on a host with
 	// no daemon running — but the operator is told the local copy remains.
 	Cache CachePurger
+	// Settings removes a project's stored cache policy at deregister. Optional:
+	// a nil store means the row is simply left behind, which is untidy rather
+	// than dangerous.
+	Settings SettingsRemover
+}
+
+// SettingsRemover deletes a project's stored cache policy.
+//
+// Narrower than registry.SettingsStore on purpose: teardown only ever needs to
+// remove a row, and depending on the read/write surface would let a future
+// change here start reading policy it has no business consulting.
+type SettingsRemover interface {
+	DeleteSettings(ctx context.Context, projectID string) error
 }
 
 // CachePurger drops a project's local cache file.

@@ -1,0 +1,115 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silo admin — {{.Title}}</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/console.css">
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div class="brand-text">
+        <span class="brand-name">Silo</span>
+        <span class="brand-env">Admin</span>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-label">Operate</div>
+      <a href="/" class="{{if eq .Active "cache"}}on{{end}}">
+        {{template "ico-database" .}} Cache
+      </a>
+      <a href="/settings" class="{{if eq .Active "settings"}}on{{end}}">
+        {{template "ico-sliders" .}} Policy
+      </a>
+      <div class="nav-label">Manage</div>
+      <a href="/projects" class="{{if eq .Active "projects"}}on{{end}}">
+        {{template "ico-layers" .}} Projects
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      Operator surface — writes fleet configuration.
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h1>{{.Title}}</h1>
+        {{if .Subtitle}}<p class="sub">{{.Subtitle}}</p>{{end}}
+      </div>
+      <div class="topbar-actions">
+        {{if eq .Active "projects"}}
+          <a class="btn btn-primary btn-sm" href="/onboard/name">
+            {{template "ico-plus" .}} Onboard project
+          </a>
+        {{end}}
+      </div>
+    </header>
+
+    <main class="content">
+      {{if .Flash}}
+        <div class="notice ok">
+          <span class="n-ico i-pass">{{template "ico-check-circle" .}}</span>
+          <div class="n-body">{{.Flash}}</div>
+        </div>
+      {{end}}
+      {{if .FlashErr}}
+        <div class="notice danger">
+          <span class="n-ico i-fail">{{template "ico-alert" .}}</span>
+          <div class="n-body">{{.FlashErr}}</div>
+        </div>
+      {{end}}
+      {{template "body" .}}
+    </main>
+  </div>
+</div>
+</body>
+</html>{{end}}
+
+{{/* Icons are inline SVG: no icon-font request, no external CDN (the console
+     may run on a socket with no outbound network), and they inherit currentColor
+     so a badge or button colours them for free. */}}
+
+{{define "ico-database"}}<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>{{end}}
+
+{{define "ico-sliders"}}<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg>{{end}}
+
+{{define "ico-layers"}}<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>{{end}}
+
+{{define "ico-plus"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>{{end}}
+
+{{define "ico-check-circle"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>{{end}}
+
+{{define "ico-alert"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16.2v.1"/></svg>{{end}}
+
+{{define "ico-warn-tri"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17v.1"/></svg>{{end}}
+
+{{define "ico-spinner"}}<svg class="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>{{end}}
+
+{{define "ico-clock"}}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{end}}
+
+{{define "ico-arrow-right"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>{{end}}
+
+{{define "ico-arrow-left"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>{{end}}
+
+{{define "rail"}}
+<ol class="rail">
+  {{range $i, $s := .Rail}}
+  <li class="{{$s.State}}">
+    <span class="step-n">{{if eq $s.State "done"}}✓{{else}}{{add $i 1}}{{end}}</span>
+    <span>
+      <span class="step-t">{{$s.Label}}</span>
+      <span class="step-b">{{$s.Blurb}}</span>
+    </span>
+  </li>
+  {{end}}
+</ol>
+{{end}}

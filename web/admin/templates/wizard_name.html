@@ -1,0 +1,58 @@
+{{define "body"}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    <form method="get" action="/onboard/checks">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Name the project</h2>
+            <p class="hint">This becomes the bucket name and the local cache filename. It cannot be changed later.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label class="lbl" for="project">Project ID</label>
+            <input class="input-lg{{if .IDError}} is-error{{end}}" type="text" id="project" name="project"
+                   value="{{.Project}}" placeholder="my-service" autofocus autocomplete="off"
+                   spellcheck="false" required>
+            {{if .IDError}}
+              <p class="err">{{.IDError}}</p>
+            {{else}}
+              <p class="help">3–56 characters. Lowercase letters, digits, and hyphens only —
+                the intersection of what S3 bucket names and filenames both accept.</p>
+            {{end}}
+          </div>
+
+          {{if .Bucket}}
+          <div class="notice info">
+            <span class="n-ico">{{template "ico-check-circle" .}}</span>
+            <div class="n-body">
+              <strong>Looks good.</strong>
+              <p>Storage bucket <code>{{.Bucket}}</code> · cache file <code>{{.CacheFile}}</code></p>
+            </div>
+          </div>
+          {{end}}
+
+          <div class="notice">
+            <span class="n-ico subtle">{{template "ico-alert" .}}</span>
+            <div class="n-body">
+              <strong>Choose carefully.</strong>
+              <p>Uppercase is rejected rather than folded: silently lowercasing would let two
+                distinct IDs share one bucket while keeping separate caches — memory appearing
+                in the wrong project.</p>
+            </div>
+          </div>
+        </div>
+        <div class="card-foot">
+          <a class="btn btn-ghost" href="/projects">Cancel</a>
+          <button class="btn btn-primary" type="submit">
+            Run checks {{template "ico-arrow-right" .}}
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}

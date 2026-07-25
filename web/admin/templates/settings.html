@@ -1,0 +1,81 @@
+{{define "body"}}
+<div class="notice info">
+  <span class="n-ico">{{template "ico-alert" .}}</span>
+  <div class="n-body">
+    <strong>Blank means inherit. Zero does not.</strong>
+    <p>An empty field falls through to the next level — project, then fleet, then each
+      daemon's own flags. An explicit <code>0</code> is a real policy: a TTL of 0 means
+      never cache. Use <em>Clear</em> to drop a project's overrides entirely.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Retention policy</h2>
+      <p class="hint">Daemons pick changes up on their next sweep — no restart needed.</p>
+    </div>
+  </div>
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Scope</th>
+            <th>TTL</th>
+            <th>Max entries</th>
+            <th>Max bytes</th>
+            <th>Last change</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Rows}}
+          <tr>
+            <td>
+              {{if .IsFleet}}
+                <strong>Fleet default</strong>
+                <div class="subtle fs-sm">every project without an override</div>
+              {{else}}
+                <code class="id">{{.Project}}</code>
+              {{end}}
+            </td>
+            {{/* The form lives outside the row and inputs reference it by id: a
+                 <form> nested between <tr> and <td> is hoisted out by the HTML
+                 parser, silently detaching every input inside it. */}}
+            <td><input form="f-{{.Project}}" class="compact" type="text" name="ttl"
+                       value="{{.TTLValue}}" placeholder="inherit" title="e.g. 720h, 30m, or 0"></td>
+            <td><input form="f-{{.Project}}" class="compact" type="text" name="max_entries"
+                       value="{{.EntriesValue}}" placeholder="inherit"></td>
+            <td><input form="f-{{.Project}}" class="compact" type="text" name="max_bytes"
+                       value="{{.BytesValue}}" placeholder="inherit" title="e.g. 536870912 or 512MiB"></td>
+            <td class="fs-sm muted">
+              {{if .UpdatedAt}}{{.UpdatedAt}}<div class="subtle">by {{.UpdatedBy}}</div>{{else}}—{{end}}
+            </td>
+            <td class="actions">
+              <form id="f-{{.Project}}" method="post" action="/settings" class="inline">
+                <input type="hidden" name="project" value="{{.Project}}">
+                <button class="btn btn-sm btn-primary" type="submit">Save</button>
+              </form>
+              {{if not .IsFleet}}
+              <form method="post" action="/settings" class="inline"
+                    onsubmit="return confirm('Remove all overrides for {{.Project}}? It will inherit the fleet default.')">
+                <input type="hidden" name="project" value="{{.Project}}">
+                <input type="hidden" name="action" value="clear">
+                <button class="btn btn-sm btn-ghost" type="submit">Clear</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-foot">
+    <span class="fs-sm muted">
+      A daemon started with <code>--cache-config-source=flags</code> ignores everything here.
+    </span>
+  </div>
+</div>
+{{end}}

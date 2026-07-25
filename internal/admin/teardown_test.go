@@ -494,3 +494,90 @@ func TestTeardown_WithoutAPurgerStillCompletes(t *testing.T) {
 		t.Error("the bucket must still be deleted")
 	}
 }
+
+// recordingSettings notes which projects had their stored cache policy removed.
+type recordingSettings struct {
+	deleted []string
+	err     error
+}
+
+func (r *recordingSettings) DeleteSettings(_ context.Context, projectID string) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.deleted = append(r.deleted, projectID)
+	return nil
+}
+
+// A project's cache policy must not outlive the project. Left behind, a later
+// project re-onboarded under the same ID silently inherits the previous
+// tenant's retention settings — invisible, and the same shape of mistake as
+// inheriting its cached memory.
+func TestTeardown_DeregisterRemovesStoredSettings(t *testing.T) {
+	ctx := context.Background()
+	o, _ := newTeardownFixture(registry.StatusDecommissioning)
+	settings := &recordingSettings{}
+	o.Settings = settings
+
+	for _, step := range []TeardownStep{StepRevokeKey, StepDeleteBucket, StepDeregister} {
+		if err := o.Teardown(ctx, "proj-11", step); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+	}
+
+	if len(settings.deleted) != 1 || settings.deleted[0] != "proj-11" {
+		t.Errorf("deleted settings for %v, want [proj-11] — a stale policy row would be "+
+			"inherited by the next project with this ID", settings.deleted)
+	}
+}
+
+// Settings are removed at deregister, not earlier: a teardown paused midway
+// should still show the policy that was in force.
+func TestTeardown_SettingsSurviveUntilDeregister(t *testing.T) {
+	ctx := context.Background()
+	o, _ := newTeardownFixture(registry.StatusDecommissioning)
+	settings := &recordingSettings{}
+	o.Settings = settings
+
+	for _, step := range []TeardownStep{StepRevokeKey, StepDeleteBucket} {
+		if err := o.Teardown(ctx, "proj-11", step); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+	}
+	if len(settings.deleted) != 0 {
+		t.Errorf("settings removed at %v, want them kept until deregister", settings.deleted)
+	}
+}
+
+// A settings store that fails must not block the deregister that removes the
+// record: a stale policy row is untidy, an un-deregisterable project is not.
+func TestTeardown_SettingsFailureDoesNotBlockDeregister(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning)
+	o.Settings = &recordingSettings{err: errors.New("rqlite unreachable")}
+
+	for _, step := range []TeardownStep{StepRevokeKey, StepDeleteBucket, StepDeregister} {
+		if err := o.Teardown(ctx, "proj-11", step); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+	}
+	if f.reg.deregister == 0 {
+		t.Error("deregister must still complete when the settings store is unreachable")
+	}
+}
+
+// A nil store is the pre-console configuration and must keep working.
+func TestTeardown_NilSettingsStoreIsFine(t *testing.T) {
+	ctx := context.Background()
+	o, f := newTeardownFixture(registry.StatusDecommissioning)
+	o.Settings = nil
+
+	for _, step := range []TeardownStep{StepRevokeKey, StepDeleteBucket, StepDeregister} {
+		if err := o.Teardown(ctx, "proj-11", step); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+	}
+	if f.reg.deregister == 0 {
+		t.Error("teardown must complete with no settings store configured")
+	}
+}

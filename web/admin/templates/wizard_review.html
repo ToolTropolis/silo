@@ -1,0 +1,54 @@
+{{define "body"}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Review</h2>
+          <p class="hint">Four layers are created in order. If any fails, the ones before it are rolled back.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <dl class="summary">
+          <dt>Project ID</dt>
+          <dd>{{.Project}}</dd>
+
+          <dt>Storage bucket</dt>
+          <dd>{{.Bucket}} <span class="badge accent">versioned</span></dd>
+
+          <dt>Encryption key</dt>
+          <dd>{{.KeyID}} <span class="muted">— per-project SSE key in Vault</span></dd>
+
+          <dt>S3 credential</dt>
+          <dd>{{.CredentialID}} <span class="muted">— scoped Read/Write to this bucket only</span></dd>
+
+          <dt>Local cache file</dt>
+          <dd>{{.CacheFile}} <span class="muted">— created by a daemon on first use</span></dd>
+        </dl>
+      </div>
+      <div class="card-foot">
+        <a class="btn btn-ghost" href="/onboard/checks?project={{.Project}}">
+          {{template "ico-arrow-left" .}} Back
+        </a>
+        <form method="post" action="/onboard/provision" class="inline">
+          <input type="hidden" name="project" value="{{.Project}}">
+          <button class="btn btn-primary btn-lg" type="submit">
+            Provision {{template "ico-arrow-right" .}}
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="notice info">
+      <span class="n-ico">{{template "ico-alert" .}}</span>
+      <div class="n-body">
+        <strong>The credential is the isolation boundary.</strong>
+        <p>It permits Read and Write on <code>{{.Bucket}}</code> and nothing else, so this
+          project cannot reach another project's memory even if it tries.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

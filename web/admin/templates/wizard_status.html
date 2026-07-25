@@ -1,0 +1,86 @@
+{{define "body"}}
+{{$s := .State}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    {{if not $s.Done}}
+      {{/* Refresh only while provisioning is in flight. A meta refresh rather
+           than JS polling: there is no state to preserve across the reload, and
+           it keeps working with scripting disabled. */}}
+      <meta http-equiv="refresh" content="2">
+      <div class="notice info">
+        <span class="n-ico">{{template "ico-spinner" .}}</span>
+        <div class="n-body">
+          <strong>Provisioning {{.Project}}…</strong>
+          <p>This page refreshes itself. Leaving it will not cancel the work.</p>
+        </div>
+      </div>
+    {{else if $s.Err}}
+      <div class="notice danger">
+        <span class="n-ico i-fail">{{template "ico-alert" .}}</span>
+        <div class="n-body">
+          <strong>Provisioning failed — everything was rolled back.</strong>
+          <p>No partial project was left behind. Fix the cause below and start again.</p>
+        </div>
+      </div>
+    {{else}}
+      <div class="notice ok">
+        <span class="n-ico i-pass">{{template "ico-check-circle" .}}</span>
+        <div class="n-body">
+          <strong>{{.Project}} is ready.</strong>
+          <p>All four layers were created.</p>
+        </div>
+      </div>
+    {{end}}
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Provisioning <code class="id">{{.Project}}</code></h2>
+          <p class="hint">Created in order; a failure unwinds the layers before it.</p>
+        </div>
+      </div>
+      <ul class="checks">
+        {{range $s.Layers}}
+        <li>
+          <span class="check-ico i-{{.Status}}">
+            {{if eq .Status "pass"}}{{template "ico-check-circle" $}}
+            {{else if eq .Status "fail"}}{{template "ico-alert" $}}
+            {{else if $s.Done}}{{template "ico-warn-tri" $}}
+            {{else}}{{template "ico-spinner" $}}{{end}}
+          </span>
+          <div class="check-body">
+            <div class="check-name">{{.Name}}</div>
+            <div class="check-detail">{{.Detail}}</div>
+          </div>
+          <span class="badge {{if eq .Status "pass"}}ok{{else if eq .Status "fail"}}danger{{else}}{{end}}">
+            {{.Detail}}
+          </span>
+        </li>
+        {{end}}
+      </ul>
+
+      {{if $s.Err}}
+      <div class="card-body" style="border-top:1px solid var(--line)">
+        <div class="lbl" style="margin-bottom:6px">Error</div>
+        <pre class="snippet">{{$s.Err}}</pre>
+      </div>
+      {{end}}
+
+      <div class="card-foot">
+        <a class="btn btn-ghost" href="/projects">All projects</a>
+        {{if $s.Done}}
+          {{if $s.Err}}
+            <a class="btn btn-primary" href="/onboard/name?project={{.Project}}">Try again</a>
+          {{else}}
+            <a class="btn btn-primary" href="/onboard/done?project={{.Project}}">
+              Next steps {{template "ico-arrow-right" .}}
+            </a>
+          {{end}}
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

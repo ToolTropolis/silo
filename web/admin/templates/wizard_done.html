@@ -1,0 +1,57 @@
+{{define "body"}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    <div class="notice ok">
+      <span class="n-ico i-pass">{{template "ico-check-circle" .}}</span>
+      <div class="n-body">
+        <strong>{{.Project}} is provisioned.</strong>
+        <p>Point a daemon at it and agents can start reading and writing memory.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Connect an agent</h2>
+          <p class="hint">A token scopes a caller to exactly one project — that is the daemon's authorization boundary.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="lbl" style="margin-bottom:6px">1. Run a daemon for this project</div>
+        <pre class="snippet"><span class="c"># --tokens maps a bearer token to a project; keep the token secret.</span>
+silod --tokens "&lt;your-token&gt;={{.Project}}" \
+      --rqlite http://localhost:4001 \
+      --admin-listen ./data/silod-admin.sock</pre>
+
+        <div class="lbl" style="margin:16px 0 6px">2. Write a memory</div>
+        <pre class="snippet">curl -X POST http://127.0.0.1:8500/v1/write \
+  -H "Authorization: Bearer &lt;your-token&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"memory/notes.md","content":"'"$(printf 'hello' | base64)"'","actor":"agent-1"}'</pre>
+        <p class="help">Content is base64 in JSON, since the API carries raw bytes.</p>
+
+        <div class="lbl" style="margin:16px 0 6px">3. Read it back</div>
+        <pre class="snippet">curl http://127.0.0.1:8500/v1/read?path=memory/notes.md \
+  -H "Authorization: Bearer &lt;your-token&gt;"</pre>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><h2>Recommended next</h2></div></div>
+      <div class="card-body">
+        <p class="mt-0 muted fs-sm">
+          New projects inherit the fleet retention default. Without one, a project's local
+          cache grows without bound.
+        </p>
+        <div class="btn-row">
+          <a class="btn" href="/settings">Set a retention policy</a>
+          <a class="btn" href="/">View cache</a>
+          <a class="btn btn-primary" href="/projects">Done</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

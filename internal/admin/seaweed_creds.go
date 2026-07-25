@@ -126,6 +126,26 @@ func (s *SeaweedCredentialIssuer) Revoke(ctx context.Context, credentialID strin
 	return nil
 }
 
+// Probe reports whether credentials can actually be issued, without creating
+// anything: `s3.configure` with no -apply only lists the current identities.
+//
+// Worth checking before onboarding starts, because this is the layer most
+// likely to fail and the most awkward when it does. `weed` may be missing from
+// PATH, or — against a containerized cluster — unable to reach the addresses
+// SeaweedFS advertises, in which case it *hangs* rather than returning an
+// error. Callers should pass a ctx with a deadline for that reason.
+func (s *SeaweedCredentialIssuer) Probe(ctx context.Context) error {
+	out, err := s.run(ctx, "s3.configure")
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("admin: `weed shell` did not respond: %w "+
+				"(a host-native weed cannot reach a container-internal address and will hang)", ctx.Err())
+		}
+		return fmt.Errorf("admin: `weed shell` failed: %w (output: %s)", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
 // randKey returns n crypto-random bytes hex-encoded (a shell-clean token).
 func randKey(n int) (string, error) {
 	b := make([]byte, n)

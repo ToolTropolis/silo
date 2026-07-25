@@ -400,7 +400,7 @@ func runTeardown(args []string) error {
 		Master:     *weedMaster,
 	}, km)
 
-	o := &admin.Onboarder{Registry: reg, KMS: km, Backend: be, Creds: creds}
+	o := &admin.Onboarder{Registry: reg, KMS: km, Backend: be, Creds: creds, Settings: reg}
 	if *adminSocket != "" {
 		o.Cache = newDaemonCachePurger(*adminSocket)
 	}

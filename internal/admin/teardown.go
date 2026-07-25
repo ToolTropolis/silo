@@ -137,6 +137,20 @@ func (o *Onboarder) Teardown(ctx context.Context, projectID string, step Teardow
 		if err := o.Registry.UpdateStatus(ctx, projectID, registry.StatusDecommissioned); err != nil {
 			return fmt.Errorf("admin: teardown %q: mark decommissioned: %w", projectID, err)
 		}
+		// Drop any stored cache policy along with the record. Leaving it behind
+		// would mean a later project re-onboarded under the same ID silently
+		// inherits the previous tenant's retention settings — the same class of
+		// mistake as inheriting its cached memory, and just as invisible.
+		//
+		// Best-effort: a settings row that outlives its project is untidy, not
+		// dangerous, and must not block the teardown that removes the record.
+		if o.Settings != nil {
+			if err := o.Settings.DeleteSettings(ctx, projectID); err != nil {
+				fmt.Printf("  NOTE: could not remove %q's cache settings: %v\n"+
+					"        Delete the project_settings row by hand before reusing this project ID.\n",
+					projectID, err)
+			}
+		}
 		if err := o.Registry.Deregister(ctx, projectID); err != nil {
 			return fmt.Errorf("admin: teardown %q: deregister: %w", projectID, err)
 		}

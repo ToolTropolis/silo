@@ -1,0 +1,73 @@
+{{define "body"}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    {{$r := .Report}}
+
+    {{if $r.Blocked}}
+      <div class="notice danger">
+        <span class="n-ico i-fail">{{template "ico-alert" .}}</span>
+        <div class="n-body">
+          <strong>Onboarding would fail.</strong>
+          <p>Fix the {{len $r.Blockers}} blocking item(s) below, then re-run the checks.
+             Nothing has been created.</p>
+        </div>
+      </div>
+    {{else}}
+      <div class="notice ok">
+        <span class="n-ico i-pass">{{template "ico-check-circle" .}}</span>
+        <div class="n-body">
+          <strong>Ready to provision.</strong>
+          <p>Every precondition that can be verified from here passed.</p>
+        </div>
+      </div>
+    {{end}}
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Preflight for <code class="id">{{.Project}}</code></h2>
+          <p class="hint">Checked before anything is created, so a failure costs nothing to recover from.</p>
+        </div>
+      </div>
+      <ul class="checks">
+        {{range $r.Checks}}
+        <li>
+          <span class="check-ico i-{{.Status}}">
+            {{if eq .Status "pass"}}{{template "ico-check-circle" $}}
+            {{else if eq .Status "warn"}}{{template "ico-warn-tri" $}}
+            {{else}}{{template "ico-alert" $}}{{end}}
+          </span>
+          <div class="check-body">
+            <div class="check-name">{{.Name}}</div>
+            {{if .Detail}}<div class="check-detail">{{.Detail}}</div>{{end}}
+            {{if .Fix}}<div class="check-fix">{{.Fix}}</div>{{end}}
+          </div>
+          <span class="badge {{if eq .Status "pass"}}ok{{else if eq .Status "warn"}}warn{{else}}danger{{end}}">
+            {{if eq .Status "pass"}}Pass{{else if eq .Status "warn"}}Unverified{{else}}Blocked{{end}}
+          </span>
+        </li>
+        {{end}}
+      </ul>
+      <div class="card-foot">
+        <a class="btn btn-ghost" href="/onboard/name?project={{.Project}}">
+          {{template "ico-arrow-left" .}} Back
+        </a>
+        <div class="btn-row">
+          <a class="btn" href="/onboard/checks?project={{.Project}}">Re-run checks</a>
+          {{if $r.Blocked}}
+            <button class="btn btn-primary" aria-disabled="true" disabled>
+              Continue {{template "ico-arrow-right" .}}
+            </button>
+          {{else}}
+            <a class="btn btn-primary" href="/onboard/review?project={{.Project}}">
+              Continue {{template "ico-arrow-right" .}}
+            </a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

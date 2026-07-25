@@ -1,0 +1,111 @@
+{{define "body"}}
+{{if not .CanProv}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">
+    <strong>No provisioner configured.</strong>
+    <p>Onboarding and teardown are unavailable. Start silo-admin with S3 admin credentials.</p>
+  </div>
+</div>
+{{end}}
+
+{{if not .DaemonUp}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">
+    <strong>No daemon reachable, so unsynced write counts are unknown.</strong>
+    <p>Tearing down a project with queued writes would lose them. The daemon's own purge
+      gate still refuses, but this page cannot warn you in advance.</p>
+  </div>
+</div>
+{{end}}
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Projects</h2>
+      <p class="hint">Teardown runs one confirmed layer at a time; each is independently irreversible.</p>
+    </div>
+  </div>
+
+  {{if .Rows}}
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Status</th>
+            <th>Bucket</th>
+            <th class="num">Unsynced</th>
+            <th>Teardown</th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Rows}}
+          <tr>
+            <td><code class="id">{{.Record.ProjectID}}</code></td>
+            <td>
+              <span class="badge {{if eq .Record.Status "active"}}ok{{else if eq .Record.Status "decommissioning"}}warn{{else}}{{end}}">
+                <span class="dot"></span>{{.Record.Status}}
+              </span>
+            </td>
+            <td>
+              {{if .Record.BucketName}}<code>{{.Record.BucketName}}</code>
+              {{else}}<span class="subtle">deleted</span>{{end}}
+            </td>
+            <td class="num">
+              {{if .PendingKnown}}
+                {{if gt .Pending 0}}<span class="unsynced">{{.Pending}}</span>{{else}}0{{end}}
+              {{else}}<span class="unknown">unknown</span>{{end}}
+            </td>
+            <td>
+              {{if and $.CanProv .NextStep}}
+                {{if .Irreversible}}
+                  {{/* The destructive step demands the project ID typed exactly,
+                       matching siloctl rather than being a single click. */}}
+                  <form method="post" action="/teardown">
+                    <input type="hidden" name="project" value="{{.Record.ProjectID}}">
+                    <input type="hidden" name="step" value="{{.NextStep}}">
+                    <div class="btn-row">
+                      <input type="text" name="confirm" class="compact"
+                             placeholder="type {{.Record.ProjectID}}" autocomplete="off">
+                      <button class="btn btn-sm btn-danger" type="submit">{{.NextStep}}</button>
+                    </div>
+                    <div class="fs-sm muted" style="margin-top:5px">
+                      Irreversible — destroys the bucket and every version in it.
+                      {{if gt .Pending 0}}
+                        <div class="unsynced">{{.Pending}} unsynced write(s) will be refused until they drain.</div>
+                      {{end}}
+                    </div>
+                  </form>
+                {{else}}
+                  <form method="post" action="/teardown" class="inline"
+                        onsubmit="return confirm('Run {{.NextStep}} for {{.Record.ProjectID}}?')">
+                    <input type="hidden" name="project" value="{{.Record.ProjectID}}">
+                    <input type="hidden" name="step" value="{{.NextStep}}">
+                    <button class="btn btn-sm btn-ghost" type="submit">{{.NextStep}}</button>
+                  </form>
+                  <div class="fs-sm subtle" style="margin-top:4px">next of 4 steps</div>
+                {{end}}
+              {{else if $.CanProv}}
+                <span class="subtle">—</span>
+              {{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    <div class="empty-title">No projects yet</div>
+    <p>Onboarding provisions a bucket, an encryption key, and a scoped credential.</p>
+    {{if .CanProv}}
+      <a class="btn btn-primary" href="/onboard/name">{{template "ico-plus" .}} Onboard your first project</a>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
