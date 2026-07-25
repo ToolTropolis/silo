@@ -88,7 +88,56 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/v1/queue", s.handleQueue)
+	mux.HandleFunc("/v1/sync", s.handleSync)
 	return mux
+}
+
+// syncResponse reports what a forced drain achieved.
+type syncResponse struct {
+	Project   string `json:"project"`
+	Drained   int    `json:"drained"`
+	Remaining int    `json:"remaining"`
+	Error     string `json:"error,omitempty"`
+}
+
+// handleSync drains the caller's queue now instead of waiting for the next tick.
+//
+// The sync worker gets there eventually, but "eventually" is not good enough
+// before a shutdown or a teardown, where the question is whether it is safe to
+// destroy something. Scoped to the token's project like every other route.
+func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.authorize(r)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err)
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, errors.New("POST required"))
+		return
+	}
+
+	before, err := s.daemon.QueueDepth(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	syncErr := s.daemon.SyncProject(r.Context(), projectID)
+
+	after, err := s.daemon.QueueDepth(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	resp := syncResponse{Project: projectID, Drained: before - after, Remaining: after}
+	if syncErr != nil {
+		// Still 200: the counts are the answer, and a caller deciding whether
+		// it is safe to tear down needs the numbers more than a status code.
+		// Remaining > 0 is the signal that it is not.
+		resp.Error = syncErr.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // queueResponse reports how much of a project's memory is still only on this

@@ -44,6 +44,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "siloctl status:", err)
 			os.Exit(1)
 		}
+	case "flush":
+		if err := runFlush(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "siloctl flush:", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -59,6 +64,7 @@ func usage() {
 Usage:
   siloctl onboard --project=<id> [flags]   provision a project (registry + key + bucket + credential)
   siloctl status [--rqlite=<addrs>]        list projects and any pending teardown step
+  siloctl flush --project=<id> --daemon=<addr> --tokens=<t=p>   force-sync queued writes
   siloctl teardown --project=<id> --step=<step>   decommission one layer (confirmed)
 
 Teardown is deliberately manual: one confirmed step per invocation, in order.
@@ -285,6 +291,8 @@ func runTeardown(args []string) error {
 	fs := flag.NewFlagSet("teardown", flag.ContinueOnError)
 	project := fs.String("project", "", "project ID to tear down (required)")
 	stepName := fs.String("step", "", "one of: revoke-credential, revoke-key, delete-bucket, deregister (required)")
+	daemonAddr := fs.String("daemon", os.Getenv("SILO_DAEMON_ADDR"), "daemon address, to check for unsynced writes before deleting a bucket (or SILO_DAEMON_ADDR)")
+	daemonTokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs for the daemon check (or SILO_TOKENS)")
 	assumeYes := fs.Bool("yes", false, "skip the interactive prompt (for scripted use); still one step per invocation")
 	backendEndpoint := fs.String("backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
 	backendRegion := fs.String("backend-region", "us-east-1", "S3 region (SeaweedFS ignores it)")
@@ -340,6 +348,28 @@ func runTeardown(args []string) error {
 		}
 		return fmt.Errorf("project %q is not ready for %q; next step is %q\n"+
 			"  run: siloctl teardown --project=%s --step=%s", *project, step, due, *project, due)
+	}
+
+	// Refuse to delete a bucket while writes for it are still buffered on a
+	// daemon's disk. Those writes are addressed to a bucket that is about to
+	// stop existing, so the drain would fail forever and the data is simply
+	// gone — unrecoverable, and invisible unless someone thought to look.
+	if step == admin.StepDeleteBucket {
+		token := tokenFor(*daemonTokens, *project)
+		switch depth := queueDepthFor(ctx, *daemonAddr, token); {
+		case depth > 0:
+			return fmt.Errorf("project %q has %d write(s) still queued on the daemon\n"+
+				"  Deleting the bucket now would discard them permanently.\n"+
+				"  Drain them first: siloctl flush --project=%s --daemon=%s --tokens=%q",
+				*project, depth, *project, *daemonAddr, *daemonTokens)
+		case depth < 0 && *daemonAddr != "":
+			// Configured but unreachable — that is a real uncertainty, not a
+			// clean bill of health.
+			fmt.Printf("  WARNING: could not reach the daemon to check for unsynced writes.\n")
+		case depth < 0:
+			fmt.Printf("  NOTE: no --daemon given, so unsynced writes were not checked.\n" +
+				"        Pass --daemon and --tokens to verify nothing is still queued.\n")
+		}
 	}
 
 	if err := confirmStep(os.Stdin, os.Stdout, *project, step, *assumeYes); err != nil {
@@ -476,4 +506,124 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// runFlush forces a project's buffered writes to the backend and blocks until
+// it knows the outcome.
+//
+// The sync worker gets there on its own schedule; this is for the moments when
+// "eventually" is not an acceptable answer — before stopping a host, or before
+// tearing a project down. It exits non-zero if anything is still queued, so it
+// composes into a gate:
+//
+//	siloctl flush --project=X ... && siloctl teardown --project=X --step=...
+func runFlush(args []string) error {
+	fs := flag.NewFlagSet("flush", flag.ContinueOnError)
+	projectID := fs.String("project", "", "project whose queued writes to flush (required)")
+	daemonAddr := fs.String("daemon", os.Getenv("SILO_DAEMON_ADDR"), "daemon address (or SILO_DAEMON_ADDR)")
+	tokens := fs.String("tokens", os.Getenv("SILO_TOKENS"), "comma-separated token=projectID pairs (or SILO_TOKENS)")
+	timeout := fs.Duration("timeout", 60*time.Second, "how long to wait for the drain")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID == "" {
+		return fmt.Errorf("--project is required")
+	}
+	if *daemonAddr == "" {
+		return fmt.Errorf("--daemon is required: the daemon owns the queue, so only it can drain one")
+	}
+
+	token := tokenFor(*tokens, *projectID)
+	if token == "" {
+		return fmt.Errorf("no token for project %q in --tokens", *projectID)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	res, err := flushProject(ctx, *daemonAddr, token)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("flushed %q: %d write(s) drained, %d remaining\n", *projectID, res.Drained, res.Remaining)
+	if res.Error != "" {
+		fmt.Printf("  the drain reported: %s\n", res.Error)
+	}
+	if res.Remaining > 0 {
+		return fmt.Errorf("%d write(s) are still queued — the backend is not accepting them, "+
+			"so this project is NOT safe to tear down", res.Remaining)
+	}
+	return nil
+}
+
+// syncResult mirrors the daemon's /v1/sync response.
+type syncResult struct {
+	Project   string `json:"project"`
+	Drained   int    `json:"drained"`
+	Remaining int    `json:"remaining"`
+	Error     string `json:"error,omitempty"`
+}
+
+// flushProject asks the daemon to drain now.
+func flushProject(ctx context.Context, addr, token string) (syncResult, error) {
+	var out syncResult
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(addr, "/")+"/v1/sync", nil)
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return out, fmt.Errorf("contact daemon: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("daemon returned %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+// tokenFor finds the token scoped to a project in a token=projectID list.
+func tokenFor(spec, projectID string) string {
+	for _, pair := range splitCSV(spec) {
+		token, proj, ok := strings.Cut(pair, "=")
+		if ok && proj == projectID {
+			return token
+		}
+	}
+	return ""
+}
+
+// queueDepthFor asks the daemon how many writes are still buffered, for the
+// teardown gate. Returns -1 when it cannot tell, which the caller must treat as
+// "unknown" rather than "none".
+func queueDepthFor(ctx context.Context, addr, token string) int {
+	if addr == "" || token == "" {
+		return -1
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(addr, "/")+"/v1/queue", nil)
+	if err != nil {
+		return -1
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return -1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return -1
+	}
+	var body struct {
+		Pending int `json:"pending"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return -1
+	}
+	return body.Pending
 }
