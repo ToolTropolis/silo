@@ -99,7 +99,7 @@ func (s *Server) handleOnboard(w http.ResponseWriter, r *http.Request) {
 		redirectErr(w, r, "/projects", err.Error())
 		return
 	}
-	if err := s.prov.Onboard(r.Context(), projectID); err != nil {
+	if err := s.prov.Onboard(r.Context(), projectID, "", ""); err != nil {
 		redirectErr(w, r, "/projects", err.Error())
 		return
 	}

@@ -35,6 +35,7 @@
         <thead>
           <tr>
             <th>Project</th>
+            <th>Repository</th>
             <th>Status</th>
             <th>Bucket</th>
             <th>Tokens</th>
@@ -46,6 +47,11 @@
         {{range .Rows}}
           <tr>
             <td><a href="/project?project={{.Record.ProjectID}}"><code class="id">{{.Record.ProjectID}}</code></a></td>
+            <td class="fs-sm">
+              {{if .Record.RepoURL}}<span class="mono">{{repoLabel .Record.RepoURL}}</span>
+              {{else if .Record.RepoPath}}<span class="mono">{{.Record.RepoPath}}</span>
+              {{else}}<span class="subtle">not recorded</span>{{end}}
+            </td>
             <td>
               <span class="badge {{if eq .Record.Status "active"}}ok{{else if eq .Record.Status "decommissioning"}}warn{{else}}{{end}}">
                 <span class="dot"></span>{{.Record.Status}}

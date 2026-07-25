@@ -67,8 +67,9 @@ func (p *OnboarderProvisioner) BackendProbe() BackendProber {
 	})
 }
 
-func (p *OnboarderProvisioner) Onboard(ctx context.Context, projectID string) error {
-	return p.Onboarder.Onboard(ctx, projectID)
+func (p *OnboarderProvisioner) Onboard(ctx context.Context, projectID, repoURL, repoPath string) error {
+	return p.Onboarder.OnboardWithRepo(ctx, projectID,
+		adminpkg.RepoInfo{URL: repoURL, Path: repoPath})
 }
 
 func (p *OnboarderProvisioner) TeardownStep(ctx context.Context, projectID, step string) (string, error) {

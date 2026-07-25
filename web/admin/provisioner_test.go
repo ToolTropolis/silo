@@ -23,6 +23,7 @@ func (p *planRegistry) List(context.Context) ([]registry.ProjectRecord, error)  
 func (p *planRegistry) UpdateStatus(context.Context, string, string) error       { return nil }
 func (p *planRegistry) UpdateRefs(context.Context, string, string, string) error { return nil }
 func (p *planRegistry) ClearBucket(context.Context, string) error                { return nil }
+func (p *planRegistry) SetRepo(context.Context, string, string, string) error    { return nil }
 func (p *planRegistry) Deregister(context.Context, string) error                 { return nil }
 
 // Progress is derived from the record's own refs, the same way internal/admin

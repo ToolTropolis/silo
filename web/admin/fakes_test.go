@@ -146,10 +146,14 @@ type fakeProvisioner struct {
 
 	onboarded []string
 	steps     []string
+	repoURLs  []string
+	repoPaths []string
 }
 
-func (f *fakeProvisioner) Onboard(_ context.Context, id string) error {
+func (f *fakeProvisioner) Onboard(_ context.Context, id, repoURL, repoPath string) error {
 	f.onboarded = append(f.onboarded, id)
+	f.repoURLs = append(f.repoURLs, repoURL)
+	f.repoPaths = append(f.repoPaths, repoPath)
 	return f.onboardErr
 }
 

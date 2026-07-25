@@ -19,14 +19,15 @@
                      placeholder="/Users/you/code/myrepo   or   https://github.com/org/repo.git"
                      autocomplete="off" spellcheck="false" autofocus>
               <button class="btn" type="submit">Look up</button>
+              <a class="btn btn-ghost" href="/browse" title="Browse directories on this machine">Browse…</a>
             </div>
             {{with .Repo}}
               {{if .Problem}}<p class="err">{{.Problem}}</p>{{end}}
             {{end}}
             {{if not .Repo}}
             <p class="help">
-              An absolute path on this machine, or any git clone URL. You can also skip
-              this and name the project directly below.
+              An absolute path on this machine, or any git clone URL. Use <strong>Browse…</strong>
+              to find it by clicking, or skip this and name the project directly below.
             </p>
             {{end}}
           </div>

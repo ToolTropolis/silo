@@ -92,6 +92,46 @@ func bucketName(projectID string) string { return "silo-" + projectID }
 // a rollback that itself partially fails is reported alongside the original
 // error so an operator can finish teardown by hand.
 func (o *Onboarder) Onboard(ctx context.Context, projectID string) (err error) {
+	return o.OnboardWithRepo(ctx, projectID, RepoInfo{})
+}
+
+// RepoInfo records which repository a project serves. Both fields optional.
+type RepoInfo struct {
+	URL  string
+	Path string
+}
+
+// Empty reports whether there is nothing to record.
+func (r RepoInfo) Empty() bool { return r.URL == "" && r.Path == "" }
+
+// OnboardWithRepo provisions a project and notes the repository it belongs to.
+//
+// The repo is recorded after provisioning succeeds, not as part of it: it is
+// informational, and failing to write a note must never roll back a bucket, a
+// key, and a credential that were created correctly.
+func (o *Onboarder) OnboardWithRepo(ctx context.Context, projectID string, repo RepoInfo) (err error) {
+	if err := o.onboard(ctx, projectID); err != nil {
+		return err
+	}
+	if repo.Empty() {
+		return nil
+	}
+	setter, ok := o.Registry.(interface {
+		SetRepo(ctx context.Context, projectID, repoURL, repoPath string) error
+	})
+	if !ok {
+		return nil
+	}
+	if err := setter.SetRepo(ctx, projectID, repo.URL, repo.Path); err != nil {
+		// Deliberately not fatal, and deliberately not silent: the project is
+		// fully provisioned and usable; only the note failed.
+		fmt.Printf("  NOTE: %q was provisioned, but its repository could not be recorded: %v\n",
+			projectID, err)
+	}
+	return nil
+}
+
+func (o *Onboarder) onboard(ctx context.Context, projectID string) (err error) {
 	// Onboarding is the authoritative gate: a project that gets past here will
 	// have its ID baked into a bucket name and a cache filename for good.
 	if err := project.ValidateID(projectID); err != nil {

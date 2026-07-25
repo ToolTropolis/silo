@@ -30,6 +30,16 @@
     </div>
   </div>
   <div class="stat">
+    <div class="stat-label">Repository</div>
+    <div class="stat-value mono" style="font-size:13px">
+      {{if .Record.RepoURL}}{{repoLabel .Record.RepoURL}}
+      {{else if .Record.RepoPath}}{{base .Record.RepoPath}}
+      {{else}}<span class="subtle" style="font-style:italic">not recorded</span>{{end}}
+    </div>
+    {{if .Record.RepoURL}}<div class="stat-note mono">{{.Record.RepoURL}}</div>
+    {{else if .Record.RepoPath}}<div class="stat-note mono">{{.Record.RepoPath}}</div>{{end}}
+  </div>
+  <div class="stat">
     <div class="stat-label">Bucket</div>
     <div class="stat-value mono" style="font-size:13px">
       {{if .Record.BucketName}}{{.Record.BucketName}}{{else}}<span class="subtle">deleted</span>{{end}}

@@ -277,6 +277,14 @@ func (s *Server) wizardProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve once here rather than in the goroutine: ResolveRepo touches the
+	// filesystem, and doing it on the request keeps the error path visible.
+	var repoURL, repoPath string
+	if repo := strings.TrimSpace(r.FormValue("repo")); repo != "" {
+		src := ResolveRepo(repo)
+		repoURL, repoPath = src.RemoteURL, src.LocalPath
+	}
+
 	s.tracker.start(projectID)
 	go func() {
 		// Detached from the request: the operator's browser may navigate away,
@@ -284,7 +292,7 @@ func (s *Server) wizardProvision(w http.ResponseWriter, r *http.Request) {
 		// credential issuer cannot leak a goroutine forever.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
 		defer cancel()
-		s.tracker.finish(projectID, s.prov.Onboard(ctx, projectID))
+		s.tracker.finish(projectID, s.prov.Onboard(ctx, projectID, repoURL, repoPath))
 	}()
 
 	target := "/onboard/status?project=" + urlEscape(projectID)

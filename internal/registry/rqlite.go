@@ -59,6 +59,11 @@ func seedURL(addresses []string) string {
 	return addresses[0]
 }
 
+// projectColumns is the standard select order, shared by Get and List so the
+// two cannot drift apart as columns are added.
+const projectColumns = `project_id, bucket_name, credential_id, key_id, created_at, ` +
+	`status, generation, repo_url, repo_path`
+
 // Close releases the connection.
 func (r *Rqlite) Close() { r.conn.Close() }
 
@@ -190,8 +195,7 @@ func (r *Rqlite) Register(ctx context.Context, rec ProjectRecord) error {
 
 func (r *Rqlite) Get(ctx context.Context, projectID string) (ProjectRecord, error) {
 	rows, err := r.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
-		Query: `SELECT project_id, bucket_name, credential_id, key_id, created_at, status, generation
-			FROM projects WHERE project_id = ?`,
+		Query:     `SELECT ` + projectColumns + ` FROM projects WHERE project_id = ?`,
 		Arguments: []interface{}{projectID},
 	})
 	if err != nil {
@@ -205,8 +209,7 @@ func (r *Rqlite) Get(ctx context.Context, projectID string) (ProjectRecord, erro
 
 func (r *Rqlite) List(ctx context.Context) ([]ProjectRecord, error) {
 	rows, err := r.conn.QueryOneContext(ctx,
-		`SELECT project_id, bucket_name, credential_id, key_id, created_at, status, generation
-			FROM projects ORDER BY created_at`)
+		`SELECT `+projectColumns+` FROM projects ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("registry: list: %w", err)
 	}
@@ -278,14 +281,41 @@ func (r *Rqlite) Deregister(ctx context.Context, projectID string) error {
 }
 
 // scanRecord reads the standard column order into a ProjectRecord.
+//
+// Reads through Map rather than Scan: repo_url and repo_path are nullable, and
+// Scan into a string fails on a NULL rather than yielding "". Every project
+// onboarded before those columns existed has NULLs there.
 func scanRecord(rows gorqlite.QueryResult) (ProjectRecord, error) {
-	var rec ProjectRecord
-	err := rows.Scan(&rec.ProjectID, &rec.BucketName, &rec.CredentialID, &rec.KeyID,
-		&rec.CreatedAt, &rec.Status, &rec.Generation)
+	m, err := rows.Map()
 	if err != nil {
 		return ProjectRecord{}, fmt.Errorf("registry: scan row: %w", err)
 	}
+	var rec ProjectRecord
+	rec.ProjectID, _ = m["project_id"].(string)
+	rec.BucketName, _ = m["bucket_name"].(string)
+	rec.CredentialID, _ = m["credential_id"].(string)
+	rec.KeyID, _ = m["key_id"].(string)
+	rec.CreatedAt, _ = m["created_at"].(string)
+	rec.Status, _ = m["status"].(string)
+	rec.Generation, _ = m["generation"].(string)
+	rec.RepoURL, _ = m["repo_url"].(string)
+	rec.RepoPath, _ = m["repo_path"].(string)
 	return rec, nil
+}
+
+// SetRepo records which repository a project serves.
+func (r *Rqlite) SetRepo(ctx context.Context, projectID, repoURL, repoPath string) error {
+	res, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     `UPDATE projects SET repo_url = ?, repo_path = ? WHERE project_id = ?`,
+		Arguments: []interface{}{repoURL, repoPath, projectID},
+	})
+	if err != nil {
+		return fmt.Errorf("registry: set repo %q: %w", projectID, err)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // splitStatements breaks a multi-statement SQL string into individual trimmed

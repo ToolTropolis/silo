@@ -211,3 +211,23 @@ func NormalizeProjectID(name string) string {
 	}
 	return out
 }
+
+// repoLabel shortens a clone URL to the "org/repo" form people use when talking
+// about a repository. Falls back to the input when it does not parse that way,
+// rather than showing nothing.
+func repoLabel(url string) string {
+	s := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(url), "/"), ".git")
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	s = strings.TrimPrefix(s, "git@")
+	// Drop the host: "github.com:org/repo" and "github.com/org/repo" both
+	// become "org/repo".
+	if i := strings.IndexAny(s, ":/"); i >= 0 {
+		s = s[i+1:]
+	}
+	if s == "" {
+		return url
+	}
+	return s
+}

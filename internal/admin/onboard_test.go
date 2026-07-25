@@ -39,6 +39,8 @@ func (f *fakeRegistry) UpdateRefs(context.Context, string, string, string) error
 	f.refsUpdated = true
 	return nil
 }
+func (f *fakeRegistry) SetRepo(context.Context, string, string, string) error { return nil }
+
 func (f *fakeRegistry) Deregister(context.Context, string) error {
 	f.deregistered = true
 	return nil

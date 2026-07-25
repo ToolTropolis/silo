@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,7 +65,9 @@ type DaemonAdmin interface {
 // one-click destroy: the console reuses the same step semantics so an operator
 // cannot do anything here they could not do, with the same guardrails, there.
 type Provisioner interface {
-	Onboard(ctx context.Context, projectID string) error
+	// Onboard provisions a project, recording which repository it serves when
+	// that is known. Both repo fields may be empty.
+	Onboard(ctx context.Context, projectID, repoURL, repoPath string) error
 	TeardownStep(ctx context.Context, projectID, step string) (string, error)
 	TeardownPlan(ctx context.Context, projectID string) ([]TeardownStep, error)
 }
@@ -167,6 +170,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/settings", s.handleSettings)
 	s.mux.HandleFunc("/projects", s.handleProjects)
 	s.mux.HandleFunc("/project", s.handleProject)
+	s.mux.HandleFunc("/browse", s.handleBrowse)
 	s.mux.HandleFunc("/tokens/mint", s.handleMintToken)
 	s.mux.HandleFunc("/tokens/revoke", s.handleRevokeToken)
 	// The wizard owns /onboard/*; the bare /onboard stays a plain POST so the
@@ -239,6 +243,7 @@ var viewTitles = map[string]string{
 	"settings.html":       "Settings",
 	"projects.html":       "Projects",
 	"project.html":        "Project",
+	"browse.html":         "Find a repository",
 	"wizard_name.html":    "Onboard a project",
 	"wizard_checks.html":  "Onboard — checks",
 	"wizard_review.html":  "Onboard — review",
@@ -250,7 +255,7 @@ var viewTitles = map[string]string{
 
 // contentViews are every page rendered inside the app shell.
 var contentViews = []string{
-	"cache.html", "settings.html", "projects.html", "project.html",
+	"cache.html", "settings.html", "projects.html", "project.html", "browse.html",
 	"wizard_name.html", "wizard_checks.html", "wizard_review.html", "wizard_connect.html",
 	"wizard_status.html", "wizard_done.html",
 }
@@ -310,6 +315,10 @@ func templateFuncs() template.FuncMap {
 		"bytes":    humanBytes,
 		"duration": humanDuration,
 		"add":      func(a, b int) int { return a + b },
+		// repoLabel shortens a clone URL to "org/repo", which is how people
+		// actually refer to a repository. The full URL is still shown beneath.
+		"repoLabel": repoLabel,
+		"base":      filepath.Base,
 		// pctOf renders how much of a file is reclaimable, which is the signal
 		// for whether compaction is worth running.
 		"pctOf": func(part, whole int64) string {

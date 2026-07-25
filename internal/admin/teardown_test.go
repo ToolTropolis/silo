@@ -39,6 +39,8 @@ func (r *tdRegistry) UpdateStatus(_ context.Context, _, status string) error {
 	r.rec.Status = status
 	return nil
 }
+func (r *tdRegistry) SetRepo(context.Context, string, string, string) error { return nil }
+
 func (r *tdRegistry) Deregister(context.Context, string) error { r.deregister++; return nil }
 
 // UpdateRefs and ClearBucket mutate the stored record the way rqlite does —
