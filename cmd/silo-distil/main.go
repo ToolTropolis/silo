@@ -77,7 +77,12 @@ type storeFlags struct {
 func addStoreFlags(fs *flag.FlagSet) *storeFlags {
 	f := &storeFlags{}
 	fs.StringVar(&f.project, "project", "", "project ID (required)")
-	fs.StringVar(&f.cacheDir, "cache-dir", "./data/cache", "bbolt cache directory")
+	// Deliberately NOT silod's ./data/cache. bbolt takes an exclusive lock per
+	// file, so pointing both here means whichever process touches a project
+	// second blocks for five seconds and then fails with a timeout that looks
+	// nothing like its cause. The dashboard and siloctl already avoid sharing
+	// silod's directory for the same reason.
+	fs.StringVar(&f.cacheDir, "cache-dir", "./data/distil-cache", "bbolt cache directory (must not be silod's --cache-dir; bbolt locks each file exclusively)")
 	fs.StringVar(&f.endpoint, "backend-endpoint", "http://localhost:8333", "SeaweedFS S3 endpoint")
 	fs.StringVar(&f.region, "backend-region", "us-east-1", "S3 region")
 	fs.StringVar(&f.accessKey, "s3-access-key", backend.RuntimeEnv("SILO_S3_ACCESS_KEY", "SILO_RUNTIME_ACCESS_KEY"), "S3 access key (or SILO_S3_ACCESS_KEY / SILO_RUNTIME_ACCESS_KEY)")

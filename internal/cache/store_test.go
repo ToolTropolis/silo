@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 const testProject = "proj-11"
@@ -353,5 +355,40 @@ func TestOldestQueued(t *testing.T) {
 	}
 	if got != first {
 		t.Errorf("oldest = %q, want %q (the FIFO head)", got, first)
+	}
+}
+
+// TestBoltCache_SecondProcessGetsANamedError: bbolt locks each file
+// exclusively, so two Silo processes sharing a cache directory means whichever
+// touches a project second blocks and then fails. A bare timeout gives no hint
+// where to look, so the error names the likely cause.
+func TestBoltCache_SecondProcessGetsANamedError(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	first, err := NewBoltCache(dir)
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	defer first.Close()
+	// Opening the project takes the lock.
+	if err := first.Put(ctx, testProject, "memory/x.md", []byte("held")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// A second cache over the same directory models a second process.
+	second, err := NewBoltCache(dir)
+	if err != nil {
+		t.Fatalf("second NewBoltCache: %v", err)
+	}
+	defer second.Close()
+	second.openTimeout = 50 * time.Millisecond // no need to pay the real wait
+
+	_, err = second.Get(ctx, testProject, "memory/x.md")
+	if !errors.Is(err, ErrCacheLocked) {
+		t.Fatalf("want ErrCacheLocked, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "already owns this cache directory") {
+		t.Errorf("the error should point at the likely cause, got: %v", err)
 	}
 }
