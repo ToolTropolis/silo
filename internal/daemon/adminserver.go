@@ -34,6 +34,7 @@ func (a *AdminServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/admin/purge-cache", a.handlePurgeCache)
 	mux.HandleFunc("/v1/admin/cache-stats", a.handleCacheStats)
+	mux.HandleFunc("/v1/admin/compact-cache", a.handleCompactCache)
 	return mux
 }
 
@@ -76,10 +77,60 @@ func (a *AdminServer) handlePurgeCache(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, purgeResponse{Project: projectID, Purged: true})
 }
 
+type compactResponse struct {
+	Project     string `json:"project"`
+	Compacted   bool   `json:"compacted"`
+	Reclaimed   int64  `json:"reclaimed_bytes"`
+	BytesBefore int64  `json:"bytes_before"`
+	BytesAfter  int64  `json:"bytes_after"`
+	SkipReason  string `json:"skip_reason,omitempty"`
+}
+
+// handleCompactCache rewrites a project's cache file, returning the disk that
+// eviction freed but bbolt kept.
+//
+// A skip is 200, not an error: refusing while writes are queued is the designed
+// safe behaviour, and the caller is told why rather than being handed a failure
+// to interpret.
+func (a *AdminServer) handleCompactCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, errors.New("POST required"))
+		return
+	}
+	projectID := r.URL.Query().Get("project")
+	if projectID == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("project required"))
+		return
+	}
+
+	res, err := a.daemon.CompactCache(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, compactResponse{
+		Project:     projectID,
+		Compacted:   !res.Skipped,
+		Reclaimed:   res.Reclaimed(),
+		BytesBefore: res.BytesBefore,
+		BytesAfter:  res.BytesAfter,
+		SkipReason:  res.SkipReason,
+	})
+}
+
 type cacheStat struct {
 	Project string `json:"project"`
 	Pending int    `json:"pending"`
 	Oldest  string `json:"oldest_queued_at,omitempty"`
+	// Entries and Bytes describe live cached content; FileBytes is what the
+	// file actually occupies. The console shows the gap between the last two,
+	// since that is precisely what compaction reclaims.
+	Entries   int   `json:"entries"`
+	Bytes     int64 `json:"bytes"`
+	FileBytes int64 `json:"file_bytes"`
+	// StatsError records why the size fields are absent, so the console can
+	// show "unknown" rather than rendering a fabricated zero.
+	StatsError string `json:"stats_error,omitempty"`
 }
 
 // handleCacheStats reports local cache state across every project this daemon
@@ -96,6 +147,11 @@ func (a *AdminServer) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 			if oldest, err := a.daemon.OldestQueued(r.Context(), projectID); err == nil {
 				s.Oldest = oldest
 			}
+		}
+		if cs, err := a.daemon.CacheStats(r.Context(), projectID); err == nil {
+			s.Entries, s.Bytes, s.FileBytes = cs.Entries, cs.Bytes, cs.FileBytes
+		} else {
+			s.StatsError = err.Error()
 		}
 		stats = append(stats, s)
 	}
