@@ -19,10 +19,21 @@
           <dd>{{.Bucket}} <span class="badge accent">versioned</span></dd>
 
           <dt>Encryption key</dt>
-          <dd>{{.KeyID}} <span class="muted">— per-project SSE key in Vault</span></dd>
+          <dd>
+            <span class="muted">Vault path</span> {{.KeyID}}
+            <div class="fs-sm subtle" style="margin-top:2px">
+              The key material is generated in Vault. This is where it lives, not the key itself.
+            </div>
+          </dd>
 
           <dt>S3 credential</dt>
-          <dd>{{.CredentialID}} <span class="muted">— scoped Read/Write to this bucket only</span></dd>
+          <dd>
+            <span class="muted">identity</span> {{.CredentialID}}
+            <div class="fs-sm subtle" style="margin-top:2px">
+              Scoped Read/Write to this bucket only. Its access and secret keys are
+              generated at provisioning and stored in Vault — never here.
+            </div>
+          </dd>
 
           <dt>Local cache file</dt>
           <dd>{{.CacheFile}} <span class="muted">— created by a daemon on first use</span></dd>

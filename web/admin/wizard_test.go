@@ -466,3 +466,45 @@ func TestWizard_StatusForNeverStartedStillRedirects(t *testing.T) {
 		t.Errorf("status = %d, want a redirect for an unknown project", resp.StatusCode)
 	}
 }
+
+// The review step shows a credential name and a Vault path, both of which look
+// enough like secrets to alarm a reader. Label them as references, and make it
+// impossible for the console to render real key material by accident.
+func TestWizard_ReviewLabelsReferencesNotSecrets(t *testing.T) {
+	ts := newFixture(t, Config{
+		Registry: &fakeRegistry{}, Settings: newFakeSettings(nil), Prov: &fakeProvisioner{},
+	})
+
+	body := getBody(t, ts, "/onboard/review?project=newproj")
+
+	if !strings.Contains(body, "Vault path") {
+		t.Error("the key field should be labelled as a Vault path, not as the key")
+	}
+	if !strings.Contains(body, "not the key itself") {
+		t.Error("the page should say explicitly that this is not the key material")
+	}
+	if !strings.Contains(body, "never here") {
+		t.Error("the credential field should say its secret is not shown here")
+	}
+}
+
+// A standing guarantee: the console renders references, never secrets. The
+// registry has no column for key material, so there is nothing to leak — this
+// test fails loudly if a future change starts passing one in.
+func TestWizard_ReviewNeverRendersKeyMaterial(t *testing.T) {
+	ts := newFixture(t, Config{
+		Registry: &fakeRegistry{}, Settings: newFakeSettings(nil), Prov: &fakeProvisioner{},
+	})
+
+	body := getBody(t, ts, "/onboard/review?project=newproj")
+
+	// Shapes that would indicate real material rather than an identifier.
+	for _, leak := range []string{
+		"BEGIN PRIVATE KEY", "aws_secret", "secret_key", "SILOADMINSECRET",
+		"silo_pat_", "dev-only-token",
+	} {
+		if strings.Contains(body, leak) {
+			t.Errorf("the review page rendered something secret-shaped: %q", leak)
+		}
+	}
+}
