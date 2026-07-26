@@ -340,19 +340,30 @@ func (s *Server) wizardStatus(w http.ResponseWriter, r *http.Request) {
 	// reasons the console cannot see.
 	if !state.Done && !state.Started.IsZero() && time.Since(state.Started) > 3*time.Minute {
 		data["Stalled"] = true
+	} else if !state.Done {
+		// Poll while the work is in flight. Set here rather than in the template
+		// because the layout emits it inside <head>, which is the only place a
+		// meta refresh takes effect.
+		data["Refresh"] = "2"
 	}
 	s.render(w, "wizard_status.html", data)
 }
 
-// registryRecord reports whether a project exists in the registry.
+// registryRecord reports whether a project finished provisioning.
+//
+// Existence of the record is NOT enough: it is created by the first of four
+// layers, so a project stuck at the credential step already has one. Onboarding
+// persists the key and credential refs only after every layer succeeded, so
+// both being present is what actually means "done".
 func (s *Server) registryRecord(r *http.Request, projectID string) (bool, error) {
 	if s.registry == nil {
 		return false, errors.New("no registry configured")
 	}
-	if _, err := s.registry.Get(r.Context(), projectID); err != nil {
+	rec, err := s.registry.Get(r.Context(), projectID)
+	if err != nil {
 		return false, err
 	}
-	return true, nil
+	return rec.KeyID != "" && rec.CredentialID != "", nil
 }
 
 // provisionedState describes a project the registry already knows about.

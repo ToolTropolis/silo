@@ -19,10 +19,8 @@
         </div>
       </div>
     {{else if not $s.Done}}
-      {{/* Refresh only while provisioning is in flight. A meta refresh rather
-           than JS polling: there is no state to preserve across the reload, and
-           it keeps working with scripting disabled. */}}
-      <meta http-equiv="refresh" content="2">
+      {{/* The refresh itself is set by the handler and emitted in <head>; a
+           meta tag here would be ignored. */}}
       <div class="notice info">
         <span class="n-ico">{{template "ico-spinner" .}}</span>
         <div class="n-body">

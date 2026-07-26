@@ -213,8 +213,45 @@ func postForm(t *testing.T, ts *httptest.Server, path string, form url.Values) *
 }
 
 // activeProject is the common single-project registry used across tests.
+//
+// Includes the key and credential refs, because those are what mark a project as
+// fully provisioned: onboarding persists them only after all four layers
+// succeeded, so a record without them is one stuck mid-flow.
 func activeProject(id string) *fakeRegistry {
+	return &fakeRegistry{records: []registry.ProjectRecord{
+		{
+			ProjectID: id, BucketName: "silo-" + id, Status: registry.StatusActive,
+			KeyID: "projects/" + id, CredentialID: "silo-cred-" + id,
+		},
+	}}
+}
+
+// partiallyProvisioned is a project whose record exists but whose refs are
+// unset — the shape of one stuck partway through onboarding.
+func partiallyProvisioned(id string) *fakeRegistry {
 	return &fakeRegistry{records: []registry.ProjectRecord{
 		{ProjectID: id, BucketName: "silo-" + id, Status: registry.StatusActive},
 	}}
+}
+
+// blockingProvisioner never finishes onboarding, so a test can observe the
+// in-flight state.
+type blockingProvisioner struct {
+	release chan struct{}
+}
+
+func (b *blockingProvisioner) Onboard(ctx context.Context, _, _, _ string) error {
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+func (b *blockingProvisioner) TeardownStep(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (b *blockingProvisioner) TeardownPlan(context.Context, string) ([]TeardownStep, error) {
+	return nil, nil
 }

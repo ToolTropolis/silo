@@ -7,6 +7,10 @@
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/console.css">
+{{/* A view sets Refresh to poll itself. It has to be emitted here: browsers
+     only honour meta refresh inside <head>, so a view that rendered its own tag
+     into the body slot would be silently ignored. */}}
+{{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
 </head>
 <body>
 <div class="app">

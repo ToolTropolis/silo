@@ -508,3 +508,75 @@ func TestWizard_ReviewNeverRendersKeyMaterial(t *testing.T) {
 		}
 	}
 }
+
+// The status page polls itself with a meta refresh, and browsers honour that
+// ONLY inside <head>. It previously rendered into the body slot, so the tag was
+// silently ignored and the page sat on "in progress" until manually reloaded.
+func TestWizard_StatusRefreshTagIsInHead(t *testing.T) {
+	// A provisioner that never returns keeps the state in flight.
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	fp := &blockingProvisioner{release: block}
+
+	ts := newFixture(t, Config{
+		Registry: &fakeRegistry{}, Settings: newFakeSettings(nil), Prov: fp,
+	})
+	postForm(t, ts, "/onboard/provision", url.Values{"project": {"newproj"}})
+
+	body := getBody(t, ts, "/onboard/status?project=newproj")
+
+	head := body
+	if i := strings.Index(body, "</head>"); i >= 0 {
+		head = body[:i]
+	} else {
+		t.Fatal("no </head> in the rendered page")
+	}
+	if !strings.Contains(head, `http-equiv="refresh"`) {
+		t.Error("the refresh tag must be inside <head>, or the browser ignores it " +
+			"and the page never updates")
+	}
+	if !strings.Contains(body, "Provisioning") {
+		t.Error("an in-flight provision should say so")
+	}
+}
+
+// A finished page must NOT keep polling, or it reloads forever.
+func TestWizard_StatusStopsRefreshingWhenDone(t *testing.T) {
+	ts := newFixture(t, Config{
+		Registry: activeProject("already-done"), Settings: newFakeSettings(nil),
+		Prov: &fakeProvisioner{},
+	})
+
+	body := getBody(t, ts, "/onboard/status?project=already-done")
+	if strings.Contains(body, `http-equiv="refresh"`) {
+		t.Error("a completed provision must stop refreshing")
+	}
+	if !strings.Contains(body, "is ready") {
+		t.Error("it should report completion")
+	}
+}
+
+// A registry record alone does not mean provisioning finished: it is created by
+// the first of four layers, so a project stuck at the credential step already
+// has one. Reporting that as "ready" would tell an operator a half-provisioned
+// project was usable.
+func TestWizard_StatusDoesNotCallAPartialProvisionDone(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+
+	ts := newFixture(t, Config{
+		Registry: partiallyProvisioned("halfway"), // record exists, refs empty
+		Settings: newFakeSettings(nil),
+		Prov:     &blockingProvisioner{release: block},
+	})
+	postForm(t, ts, "/onboard/provision", url.Values{"project": {"halfway"}})
+
+	body := getBody(t, ts, "/onboard/status?project=halfway")
+
+	if strings.Contains(body, "is ready") {
+		t.Error("a project with no key or credential ref must not be reported as ready")
+	}
+	if !strings.Contains(body, "Provisioning") {
+		t.Error("it should still show as in flight")
+	}
+}
