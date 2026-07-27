@@ -187,3 +187,21 @@ func (d *Daemon) backendReachable(ctx context.Context, projectID string) error {
 	}
 	return nil
 }
+
+// cacheLister is implemented by caches that can enumerate their contents.
+//
+// A type assertion rather than a LocalCache method, matching the other
+// reporting-only additions: listing is an operator convenience, and an
+// implementation without it should not fail to compile.
+type cacheLister interface {
+	Entries(ctx context.Context, projectID string, limit int) ([]cache.CacheEntry, error)
+}
+
+// CacheEntries lists what a project has cached on this host.
+func (d *Daemon) CacheEntries(ctx context.Context, projectID string, limit int) ([]cache.CacheEntry, error) {
+	l, ok := d.cache.(cacheLister)
+	if !ok {
+		return nil, fmt.Errorf("daemon: this cache cannot list its entries")
+	}
+	return l.Entries(ctx, projectID, limit)
+}

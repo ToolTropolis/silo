@@ -150,6 +150,69 @@
   {{end}}
 </div>
 
+{{if or .Objects .CacheEntries .StorageErr}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Storage</h2>
+      <p class="hint">
+        The bucket is the durable copy. The cache is this host's local copy — it can
+        lag, be evicted, or hold a write the bucket has not seen yet.
+      </p>
+    </div>
+  </div>
+
+  {{if .StorageErr}}
+  <div class="card-body">
+    <div class="notice warn" style="margin:0">
+      <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+      <div class="n-body">Could not list the bucket: {{.StorageErr}}</div>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div>
+      <div class="lbl" style="margin-bottom:6px">
+        Bucket <code>{{.Record.BucketName}}</code>
+        <span class="badge" style="margin-left:6px">{{.ObjectCount}} object(s)</span>
+      </div>
+      {{if .Objects}}
+        <pre class="snippet" style="max-height:280px;overflow:auto">{{range .Objects}}{{.}}
+{{end}}</pre>
+      {{else}}
+        <p class="fs-sm subtle">No memory stored yet.</p>
+      {{end}}
+    </div>
+
+    <div>
+      <div class="lbl" style="margin-bottom:6px">
+        Cache <code>{{.Project}}.bbolt</code>
+        <span class="badge" style="margin-left:6px">{{len .CacheEntries}} cached</span>
+      </div>
+      {{if .CacheEntries}}
+        <div class="table-wrap" style="max-height:280px;overflow:auto">
+          <table>
+            <thead><tr><th>Path</th><th class="num">Size</th><th></th></tr></thead>
+            <tbody>
+            {{range .CacheEntries}}
+              <tr>
+                <td class="mono fs-sm">{{.Path}}</td>
+                <td class="num">{{bytes64 .Bytes}}</td>
+                <td>{{if .Queued}}<span class="badge warn" title="Not yet in the bucket">unsynced</span>{{end}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{else}}
+        <p class="fs-sm subtle">Nothing cached on this host.</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
 {{if .AgentDir}}
 <div class="card">
   <div class="card-head">

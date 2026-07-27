@@ -15,8 +15,9 @@ import (
 // fakeMemory is an in-memory Silo, so the tool layer is exercised without a
 // daemon, a network, or a bbolt file.
 type fakeMemory struct {
-	mu    sync.Mutex
-	store map[string][]byte
+	lastActor string
+	mu        sync.Mutex
+	store     map[string][]byte
 
 	readErr, writeErr, listErr, searchErr error
 	// writes records every write in order, so a test can assert what was stored
@@ -39,6 +40,13 @@ func (f *fakeMemory) Read(_ context.Context, path string) ([]byte, error) {
 		return nil, client.ErrNotFound
 	}
 	return v, nil
+}
+
+func (f *fakeMemory) WriteAs(ctx context.Context, path string, content []byte, actor string) error {
+	f.mu.Lock()
+	f.lastActor = actor
+	f.mu.Unlock()
+	return f.Write(ctx, path, content)
 }
 
 func (f *fakeMemory) Write(_ context.Context, path string, content []byte) error {
@@ -369,5 +377,39 @@ func TestStructuredOutput_MatchesTheText(t *testing.T) {
 	}
 	if m["content"] != "hello" {
 		t.Errorf("content = %v, want hello", m["content"])
+	}
+}
+
+// One MCP server serves a whole repo, so it cannot tell which agent is calling.
+// The caller names itself, and that is what makes a memory attributable.
+func TestWrite_PassesActorThrough(t *testing.T) {
+	mem := newFakeMemory()
+	sess := connect(t, mem)
+
+	callText(t, sess, "silo_write", map[string]any{
+		"path": "memory/a.md", "content": "hi", "actor": "style-reviewer",
+	})
+
+	mem.mu.Lock()
+	got := mem.lastActor
+	mem.mu.Unlock()
+	if got != "style-reviewer" {
+		t.Errorf("actor = %q, want style-reviewer", got)
+	}
+}
+
+// Actor is optional: a caller that does not name itself still writes, and the
+// daemon supplies its own default.
+func TestWrite_ActorIsOptional(t *testing.T) {
+	mem := newFakeMemory()
+	sess := connect(t, mem)
+
+	callText(t, sess, "silo_write", map[string]any{"path": "memory/a.md", "content": "hi"})
+
+	mem.mu.Lock()
+	got := mem.lastActor
+	mem.mu.Unlock()
+	if got != "" {
+		t.Errorf("actor = %q, want empty when unset", got)
 	}
 }

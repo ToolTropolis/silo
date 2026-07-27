@@ -21,6 +21,10 @@ type Config struct {
 	Endpoint string
 	// Token is the project-scoped bearer credential.
 	Token string
+	// Actor names who is writing — an agent name, a job, a person. Recorded on
+	// every write so an operator can see which agent produced which memory.
+	// Optional: the daemon supplies its own default when this is empty.
+	Actor string
 	// HTTPClient overrides the default (mainly for tests).
 	HTTPClient *http.Client
 	// Timeout for each request when HTTPClient isn't supplied.
@@ -62,12 +66,13 @@ func New(cfg Config) (Client, error) {
 		}
 	}
 
-	return &daemonClient{baseURL: baseURL, token: cfg.Token, http: httpClient}, nil
+	return &daemonClient{baseURL: baseURL, token: cfg.Token, actor: cfg.Actor, http: httpClient}, nil
 }
 
 type daemonClient struct {
 	baseURL string
 	token   string
+	actor   string
 	http    *http.Client
 }
 
@@ -154,7 +159,22 @@ func (c *daemonClient) Read(ctx context.Context, path string) ([]byte, error) {
 }
 
 func (c *daemonClient) Write(ctx context.Context, path string, content []byte) error {
+	return c.WriteAs(ctx, path, content, "")
+}
+
+func (c *daemonClient) WriteAs(ctx context.Context, path string, content []byte, actor string) error {
 	body := map[string]interface{}{"path": path, "content": content}
+	// Attribution is what lets an operator see which agent wrote what. The
+	// per-call actor wins over the client-wide one: one MCP server serves a
+	// whole repo, so the caller is the only thing that knows which agent it is.
+	// Omitted when both are unset, so the daemon keeps its own default rather
+	// than recording an empty actor.
+	if actor == "" {
+		actor = c.actor
+	}
+	if actor != "" {
+		body["actor"] = actor
+	}
 	return c.do(ctx, http.MethodPost, "/v1/write", nil, body, nil)
 }
 

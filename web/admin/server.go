@@ -57,6 +57,7 @@ type DaemonAdmin interface {
 	CacheStats(ctx context.Context) ([]ProjectCacheStat, error)
 	PurgeCache(ctx context.Context, projectID string) (PurgeOutcome, error)
 	CompactCache(ctx context.Context, projectID string) (CompactOutcome, error)
+	CacheEntries(ctx context.Context, projectID string) ([]CacheEntry, error)
 }
 
 // Provisioner onboards and tears down projects.
@@ -93,6 +94,8 @@ type Server struct {
 	mcpBinary       string
 	// dashboardURL links to the read-only memory browser, when one is running.
 	dashboardURL string
+	// memory lists what a project's bucket actually holds. Optional.
+	memory MemoryLister
 	// tracker holds in-flight provisioning progress, so the wizard can show
 	// which layer failed rather than only that something did.
 	tracker   *provisionTracker
@@ -127,6 +130,14 @@ type Config struct {
 	MCPBinary string
 	// DashboardURL, when set, links project pages to the memory browser.
 	DashboardURL string
+	// Memory lists a project's stored object paths for the storage view.
+	Memory MemoryLister
+}
+
+// MemoryLister reads the object keys in a project's bucket. Read-only and
+// keys-only: the console shows structure, not content.
+type MemoryLister interface {
+	ListPaths(ctx context.Context, projectID, prefix string) ([]string, error)
 }
 
 // TokenMinter issues agent tokens. Narrow on purpose: the console mints and
@@ -155,6 +166,7 @@ func NewServer(cfg Config) (*Server, error) {
 		agentDaemonAddr: cfg.AgentDaemonAddr,
 		mcpBinary:       cfg.MCPBinary,
 		dashboardURL:    strings.TrimSuffix(cfg.DashboardURL, "/"),
+		memory:          cfg.Memory,
 		tracker:         newProvisionTracker(),
 		templates:       views,
 		mux:             http.NewServeMux(),
@@ -324,6 +336,7 @@ func templateFuncs() template.FuncMap {
 			return s[:n] + "…"
 		},
 		"bytes":    humanBytes,
+		"bytes64":  func(n int) string { return humanBytes(int64(n)) },
 		"duration": humanDuration,
 		"add":      func(a, b int) int { return a + b },
 		// repoLabel shortens a clone URL to "org/repo", which is how people

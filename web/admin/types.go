@@ -51,3 +51,15 @@ type TeardownStep struct {
 	// buffered on a daemon's disk.
 	Blocked string
 }
+
+// CacheEntry is one cached path on a daemon's disk. Content is deliberately
+// absent: this answers "what is on this host", and streaming memory through an
+// operator console is a different decision with different exposure.
+type CacheEntry struct {
+	Path      string `json:"path"`
+	Bytes     int    `json:"bytes"`
+	WrittenAt string `json:"written_at"`
+	// Queued marks a path whose write has not reached the backend — the one
+	// case where the cache holds something the bucket does not.
+	Queued bool `json:"queued"`
+}

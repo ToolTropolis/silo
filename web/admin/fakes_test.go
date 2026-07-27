@@ -121,8 +121,10 @@ type fakeDaemon struct {
 	compact   CompactOutcome
 	compctErr error
 
-	purged    []string
-	compacted []string
+	entries    []CacheEntry
+	entriesErr error
+	purged     []string
+	compacted  []string
 }
 
 func (f *fakeDaemon) CacheStats(context.Context) ([]ProjectCacheStat, error) {
@@ -132,6 +134,10 @@ func (f *fakeDaemon) CacheStats(context.Context) ([]ProjectCacheStat, error) {
 func (f *fakeDaemon) PurgeCache(_ context.Context, id string) (PurgeOutcome, error) {
 	f.purged = append(f.purged, id)
 	return f.purge, f.purgeErr
+}
+
+func (f *fakeDaemon) CacheEntries(context.Context, string) ([]CacheEntry, error) {
+	return f.entries, f.entriesErr
 }
 
 func (f *fakeDaemon) CompactCache(_ context.Context, id string) (CompactOutcome, error) {

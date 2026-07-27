@@ -132,6 +132,7 @@ func run(args []string) error {
 		cfg.Prov = prov
 		// Probes power the wizard's preflight step, which turns most
 		// provisioning failures into a message shown before anything is created.
+		cfg.Memory = prov.Onboarder.Backend
 		cfg.BackendProbe = prov.BackendProbe()
 		cfg.CredsProbe = prov.CredsProbe()
 	} else {

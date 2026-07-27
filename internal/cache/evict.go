@@ -230,3 +230,58 @@ func (c *BoltCache) fileInfo(projectID string) (int64, error) {
 	}
 	return info.Size(), nil
 }
+
+// CacheEntry describes one cached path, without its content.
+type CacheEntry struct {
+	Path      string
+	Bytes     int
+	WrittenAt time.Time
+	// Queued marks a path whose write has not reached the backend. It exists
+	// only on this host until the queue drains, which is the one case where the
+	// cache holds something the bucket does not.
+	Queued bool
+}
+
+// Entries lists what a project has cached, newest first.
+//
+// Content is deliberately excluded: this answers "what is on this host", and
+// streaming memory through an operator console is a different decision with
+// different exposure.
+func (c *BoltCache) Entries(ctx context.Context, projectID string, limit int) ([]CacheEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	db, err := c.db(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []CacheEntry
+	err = db.View(func(tx *bolt.Tx) error {
+		pinned, err := pinnedPaths(tx)
+		if err != nil {
+			return err
+		}
+		return tx.Bucket(contentBucket).ForEach(func(k, v []byte) error {
+			_, writtenAt, decErr := decodeEntry(v)
+			if decErr != nil {
+				return nil // unreadable entries are not worth showing
+			}
+			path := string(k)
+			_, queued := pinned[path]
+			out = append(out, CacheEntry{
+				Path: path, Bytes: len(v), WrittenAt: writtenAt, Queued: queued,
+			})
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cache: entries %q: %w", projectID, err)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].WrittenAt.After(out[j].WrittenAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}

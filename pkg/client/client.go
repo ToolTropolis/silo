@@ -28,6 +28,9 @@ type Client interface {
 	// through the daemon's SafeWrite (CAS + versioning) — the caller
 	// never needs to think about conflicts or retries.
 	Write(ctx context.Context, path string, content []byte) error
+	// WriteAs records who wrote it, so an operator can attribute a memory to
+	// the agent that produced it. An empty actor behaves exactly like Write.
+	WriteAs(ctx context.Context, path string, content []byte, actor string) error
 
 	// List returns memory paths under a prefix (mirrors browsing a
 	// directory of .md files).

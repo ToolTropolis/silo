@@ -153,3 +153,26 @@ func (c *DaemonClient) post(ctx context.Context, path, projectID string) (*http.
 	}
 	return resp, nil
 }
+
+func (c *DaemonClient) CacheEntries(ctx context.Context, projectID string) ([]CacheEntry, error) {
+	u := c.base + "/v1/admin/cache-entries?project=" + url.QueryEscape(projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: cache entries %q: %w", projectID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daemon: cache entries %q: status %d", projectID, resp.StatusCode)
+	}
+	var body struct {
+		Entries []CacheEntry `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("daemon: cache entries %q: decode: %w", projectID, err)
+	}
+	return body.Entries, nil
+}

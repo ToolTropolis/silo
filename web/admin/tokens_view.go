@@ -104,6 +104,23 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		data["MCPConfigured"] = hasMCPConfig(rec.RepoPath)
 	}
 
+	// Storage: what the bucket holds, and what this host caches. Two different
+	// questions — the cache is a local copy that can lag, be evicted, or hold a
+	// write the bucket has not seen yet.
+	if s.memory != nil {
+		if paths, err := s.memory.ListPaths(ctx, projectID, ""); err != nil {
+			data["StorageErr"] = err.Error()
+		} else {
+			data["Objects"] = paths
+			data["ObjectCount"] = len(paths)
+		}
+	}
+	if s.daemon != nil {
+		if entries, err := s.daemon.CacheEntries(ctx, projectID); err == nil {
+			data["CacheEntries"] = entries
+		}
+	}
+
 	// The .mcp.json for this project, so the page is self-sufficient for
 	// re-wiring a repo without walking back through the wizard.
 	if cfg, err := RenderMCPConfig(projectID, s.agentDaemonAddr, s.mcpBinary); err == nil {

@@ -109,6 +109,9 @@ func (c *countingDaemon) CacheStats(context.Context) ([]ProjectCacheStat, error)
 func (c *countingDaemon) PurgeCache(context.Context, string) (PurgeOutcome, error) {
 	return PurgeOutcome{}, nil
 }
+func (c *countingDaemon) CacheEntries(context.Context, string) ([]CacheEntry, error) {
+	return nil, nil
+}
 func (c *countingDaemon) CompactCache(context.Context, string) (CompactOutcome, error) {
 	return CompactOutcome{}, nil
 }

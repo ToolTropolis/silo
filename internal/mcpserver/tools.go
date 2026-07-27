@@ -29,6 +29,9 @@ import (
 type Memory interface {
 	Read(ctx context.Context, path string) ([]byte, error)
 	Write(ctx context.Context, path string, content []byte) error
+	// WriteAs records who wrote it. Separate from Write so the Client interface
+	// keeps its existing shape for every other caller.
+	WriteAs(ctx context.Context, path string, content []byte, actor string) error
 	List(ctx context.Context, pathPrefix string) ([]string, error)
 	Search(ctx context.Context, pathPrefix, query string) ([]client.SearchResult, error)
 }
@@ -63,6 +66,10 @@ type ReadOutput struct {
 type WriteInput struct {
 	Path    string `json:"path" jsonschema:"Memory path to write, e.g. memory/conventions.md"`
 	Content string `json:"content" jsonschema:"Full markdown content to store at this path. This replaces the whole file, so include everything you want kept."`
+	// One MCP server serves a whole repo, so it cannot tell which of the repo's
+	// agents is calling. The caller names itself instead, which is what lets an
+	// operator see which agent produced which memory.
+	Actor string `json:"actor,omitempty" jsonschema:"Who is writing: your agent name, e.g. style-reviewer. Recorded so an operator can see which agent produced this memory."`
 }
 
 type WriteOutput struct {
@@ -167,7 +174,7 @@ func (s *Server) handleWrite(ctx context.Context, _ *mcp.CallToolRequest, in Wri
 			WriteOutput{}, nil
 	}
 
-	if err := s.memory.Write(ctx, path, []byte(in.Content)); err != nil {
+	if err := s.memory.WriteAs(ctx, path, []byte(in.Content), in.Actor); err != nil {
 		return errorResult(fmt.Sprintf("write %q: %v", path, err)), WriteOutput{}, nil
 	}
 	return &mcp.CallToolResult{

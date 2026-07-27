@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"net/http"
+	"time"
 )
 
 // AdminServer is the daemon's operator surface: fleet-wide and destructive
@@ -35,6 +36,7 @@ func (a *AdminServer) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/purge-cache", a.handlePurgeCache)
 	mux.HandleFunc("/v1/admin/cache-stats", a.handleCacheStats)
 	mux.HandleFunc("/v1/admin/compact-cache", a.handleCompactCache)
+	mux.HandleFunc("/v1/admin/cache-entries", a.handleCacheEntries)
 	return mux
 }
 
@@ -156,4 +158,36 @@ func (a *AdminServer) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 		stats = append(stats, s)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": stats})
+}
+
+// handleCacheEntries lists a project's cached paths — what this host holds,
+// as distinct from what the bucket holds.
+func (a *AdminServer) handleCacheEntries(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("project")
+	if projectID == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("project required"))
+		return
+	}
+	// Bounded: an operator view does not need every key of a large cache, and
+	// an unbounded response is a way to make the console slow by accident.
+	entries, err := a.daemon.CacheEntries(r.Context(), projectID, 500)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	type row struct {
+		Path      string `json:"path"`
+		Bytes     int    `json:"bytes"`
+		WrittenAt string `json:"written_at"`
+		Queued    bool   `json:"queued"`
+	}
+	out := make([]row, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, row{
+			Path: e.Path, Bytes: e.Bytes,
+			WrittenAt: e.WrittenAt.UTC().Format(time.RFC3339), Queued: e.Queued,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": projectID, "entries": out})
 }
