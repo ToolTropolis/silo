@@ -413,3 +413,28 @@ func TestWrite_ActorIsOptional(t *testing.T) {
 		t.Errorf("actor = %q, want empty when unset", got)
 	}
 }
+
+// Instructions arrive at initialize, before any tool call — the only portable
+// place to tell an agent this memory exists. A repo's CLAUDE.md is Claude Code
+// specific and hooks are runtime specific; this is in the MCP protocol itself.
+func TestInstructions_TellAnAgentWhenToReadAndWrite(t *testing.T) {
+	got := Instructions("myrepo")
+
+	if !strings.Contains(got, "myrepo") {
+		t.Error("instructions should name the project, not describe memory in the abstract")
+	}
+	for _, want := range []string{"silo_read", "silo_write", "actor"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("instructions should mention %q", want)
+		}
+	}
+	// Read-before-write matters: writes replace the whole file, so an agent that
+	// does not know this will silently truncate someone else's memory.
+	if !strings.Contains(got, "replace the whole file") {
+		t.Error("instructions must warn that writes replace the file")
+	}
+	// Memory is durable and operator-visible; secrets do not belong in it.
+	if !strings.Contains(got, "secrets") {
+		t.Error("instructions should warn against storing secrets")
+	}
+}

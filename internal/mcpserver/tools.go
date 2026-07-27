@@ -136,6 +136,31 @@ func (s *Server) Register(srv *mcp.Server) {
 	}, s.handleSearch)
 }
 
+// Instructions is what a client is told about this server at initialize, before
+// any tool call.
+//
+// Tool descriptions only get read when a model is already deciding whether to
+// call something; this arrives first and frames the whole session. It is also
+// the only portable place to say it — a repo's CLAUDE.md is Claude Code
+// specific, and hooks exist in some runtimes and not others, but Instructions
+// is in the MCP protocol itself, so every compliant client sees it.
+//
+// Phrased as a working habit rather than a feature tour: an agent that does not
+// read at the start has no memory, and one that never writes leaves none behind.
+func Instructions(projectID string) string {
+	return "This project has persistent memory in Silo that outlives your session.\n\n" +
+		"At the start of a task, call silo_list or silo_read on memory/conventions.md " +
+		"to recall what earlier sessions learned about " + projectID + ". Do this before " +
+		"asking the user something the project may already have recorded.\n\n" +
+		"When you learn something durable — a convention, a decision and its reason, a " +
+		"gotcha that cost time — call silo_write to store it, and set actor to your " +
+		"agent name so an operator can see which agent recorded what. Prefer " +
+		"memory/<topic>.md for facts the whole project shares, and " +
+		"memory/agents/<your-name>.md for notes only you need.\n\n" +
+		"Writes replace the whole file, so read before writing when adding to one. " +
+		"Do not store secrets, credentials, or anything you would not commit."
+}
+
 func (s *Server) handleRead(ctx context.Context, _ *mcp.CallToolRequest, in ReadInput) (*mcp.CallToolResult, ReadOutput, error) {
 	path := strings.TrimSpace(in.Path)
 	if path == "" {

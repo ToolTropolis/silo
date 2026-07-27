@@ -94,7 +94,12 @@ func run(args []string) error {
 		Name:    "silo",
 		Title:   "Silo persistent memory (" + label + ")",
 		Version: version,
-	}, nil)
+	}, &mcp.ServerOptions{
+		// Delivered at initialize, before any tool call, to every compliant
+		// client — the portable way to tell an agent this memory exists and
+		// when to use it.
+		Instructions: mcpserver.Instructions(label),
+	})
 	mcpserver.New(memory, label).Register(srv)
 
 	// Stop cleanly on SIGINT/SIGTERM so the agent runtime can shut the
