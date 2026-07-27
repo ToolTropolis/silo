@@ -17,7 +17,16 @@ services:
     # The filer gRPC port (HTTP port + 10000 = 18888) is published so Silo's
     # credential issuer can write per-project S3 identities via the filer
     # ConfigurationApi.
-    command: "server -s3 -s3.port=8333 -dir=/data"
+    # -ip advertises a host-reachable identifier; -ip.bind keeps the listener on
+    # every interface. Without the pair, SeaweedFS advertises its container
+    # address (e.g. 172.24.0.2:9333) and a host client is told to talk to an
+    # address it cannot route to. Same reason the rqlite nodes set
+    # -http-adv-addr.
+    #
+    # -ip ALONE is wrong: it sets the bind address too, so the container ends up
+    # listening on loopback inside its own namespace and is unreachable even on
+    # its published ports.
+    command: "server -s3 -s3.port=8333 -dir=/data -ip=localhost -ip.bind=0.0.0.0"
     ports:
       - "8333:8333"    # S3 API
       - "9333:9333"    # master UI
