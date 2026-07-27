@@ -62,6 +62,8 @@ func run(args []string) error {
 	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master address")
 	agentDaemon := fs.String("agent-daemon", "http://127.0.0.1:8500",
 		"the daemon address written into a repo's .mcp.json — the address an AGENT reaches, which is not --daemon (this console's admin socket)")
+	dashboardURL := fs.String("dashboard", os.Getenv("SILO_DASHBOARD_URL"),
+		"silo-dashboard URL (or SILO_DASHBOARD_URL); links project pages to the memory browser")
 	mcpBinary := fs.String("mcp-binary", "",
 		"the command written into .mcp.json (default: silo-mcp resolved to an absolute path, else the bare name)")
 	if err := fs.Parse(args); err != nil {
@@ -95,6 +97,7 @@ func run(args []string) error {
 		Token:           *token,
 		AgentDaemonAddr: *agentDaemon,
 		MCPBinary:       *mcpBinary,
+		DashboardURL:    *dashboardURL,
 	}
 
 	// The daemon is optional: without it the console still shows and edits

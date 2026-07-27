@@ -50,13 +50,14 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Active":   "projects",
-		"Subtitle": "Agent tokens and lifecycle for this project",
-		"Project":  projectID,
-		"Record":   rec,
-		"CanMint":  s.tokens != nil,
-		"Flash":    r.URL.Query().Get("flash"),
-		"FlashErr": r.URL.Query().Get("err"),
+		"Active":       "projects",
+		"Subtitle":     "Agent tokens and lifecycle for this project",
+		"Project":      projectID,
+		"Record":       rec,
+		"CanMint":      s.tokens != nil,
+		"DashboardURL": s.dashboardURL,
+		"Flash":        r.URL.Query().Get("flash"),
+		"FlashErr":     r.URL.Query().Get("err"),
 	}
 
 	// A token minted from this page is revealed here, once.

@@ -91,11 +91,14 @@ type Server struct {
 	// agentDaemonAddr and mcpBinary are what the generated .mcp.json points at.
 	agentDaemonAddr string
 	mcpBinary       string
+	// dashboardURL links to the read-only memory browser, when one is running.
+	dashboardURL string
 	// tracker holds in-flight provisioning progress, so the wizard can show
 	// which layer failed rather than only that something did.
 	tracker   *provisionTracker
 	templates map[string]*template.Template
 	mux       *http.ServeMux
+	healthState
 }
 
 // Config wires the console's dependencies. Every one is optional: a missing
@@ -122,6 +125,8 @@ type Config struct {
 	AgentDaemonAddr string
 	// MCPBinary is the command name written into .mcp.json.
 	MCPBinary string
+	// DashboardURL, when set, links project pages to the memory browser.
+	DashboardURL string
 }
 
 // TokenMinter issues agent tokens. Narrow on purpose: the console mints and
@@ -149,6 +154,7 @@ func NewServer(cfg Config) (*Server, error) {
 		vault:           newTokenVault(),
 		agentDaemonAddr: cfg.AgentDaemonAddr,
 		mcpBinary:       cfg.MCPBinary,
+		dashboardURL:    strings.TrimSuffix(cfg.DashboardURL, "/"),
 		tracker:         newProvisionTracker(),
 		templates:       views,
 		mux:             http.NewServeMux(),
@@ -291,6 +297,9 @@ func (s *Server) render(w http.ResponseWriter, name string, data map[string]any)
 		return
 	}
 	data["Title"] = viewTitles[name]
+	// Injected here rather than per-handler: the header renders on every page,
+	// so every view needs it and none should have to remember.
+	data["Daemon"] = s.health()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	entry := "layout"
 	if name == "error.html" {

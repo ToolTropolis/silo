@@ -20,6 +20,16 @@
 </div>
 {{end}}
 
+{{if .DashboardURL}}
+<p class="fs-sm" style="margin:-8px 0 14px">
+  {{/* The dashboard already browses memory and version history; linking beats
+       rebuilding it in a surface that is meant to write config, not read data. */}}
+  <a href="{{.DashboardURL}}/memory?project={{.Project}}" target="_blank" rel="noopener">
+    Browse this project's memory in the dashboard →
+  </a>
+</p>
+{{end}}
+
 <div class="stats">
   <div class="stat">
     <div class="stat-label">Status</div>

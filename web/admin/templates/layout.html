@@ -50,6 +50,18 @@
         {{if .Subtitle}}<p class="sub">{{.Subtitle}}</p>{{end}}
       </div>
       <div class="topbar-actions">
+        {{with .Daemon}}
+          {{/* Every page shows it: a dead daemon means stale cache numbers and
+               failing maintenance actions, which otherwise only surfaces as a
+               confusing error on the page that needed it. */}}
+          {{if not .Configured}}
+            <span class="badge" title="silo-admin was started without --daemon">no daemon</span>
+          {{else if .Up}}
+            <span class="badge ok" title="{{.Detail}}"><span class="dot"></span>daemon up</span>
+          {{else}}
+            <span class="badge danger" title="{{.Detail}}"><span class="dot"></span>daemon down</span>
+          {{end}}
+        {{end}}
         {{if eq .Active "projects"}}
           <a class="btn btn-primary btn-sm" href="/onboard/name">
             {{template "ico-plus" .}} Onboard project
