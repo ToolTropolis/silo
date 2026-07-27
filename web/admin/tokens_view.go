@@ -93,6 +93,17 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Agents defined in the linked repo. Read-only: it answers "what uses this
+	// project, and is any of it wired up?" without the console reaching into a
+	// repo it does not own.
+	if rec.RepoPath != "" {
+		scan := ScanAgents(rec.RepoPath)
+		data["Agents"] = scan.Agents
+		data["AgentDir"] = scan.Dir
+		data["AgentErr"] = scan.Problem
+		data["MCPConfigured"] = hasMCPConfig(rec.RepoPath)
+	}
+
 	// The .mcp.json for this project, so the page is self-sufficient for
 	// re-wiring a repo without walking back through the wizard.
 	if cfg, err := RenderMCPConfig(projectID, s.agentDaemonAddr, s.mcpBinary); err == nil {

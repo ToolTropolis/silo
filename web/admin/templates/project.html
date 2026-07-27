@@ -150,6 +150,68 @@
   {{end}}
 </div>
 
+{{if .AgentDir}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Agents in this repository</h2>
+      <p class="hint">Found in <code>{{.AgentDir}}</code>.</p>
+    </div>
+    {{if .MCPConfigured}}
+      <span class="badge ok"><span class="dot"></span>repo wired to Silo</span>
+    {{else}}
+      <span class="badge warn"><span class="dot"></span>no .mcp.json</span>
+    {{end}}
+  </div>
+
+  {{if not .MCPConfigured}}
+  <div class="card-body" style="border-bottom:1px solid var(--line)">
+    <div class="notice warn" style="margin:0">
+      <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+      <div class="n-body">
+        <strong>None of these agents can reach Silo.</strong>
+        <p>Wiring is per repository, not per agent: one <code>.mcp.json</code> gives
+          every agent here the silo tools.</p>
+        <p style="margin-top:8px">
+          <a class="btn btn-sm btn-primary" href="/onboard/connect?project={{.Project}}">Write .mcp.json</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Agent</th><th>Model</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+        {{range .Agents}}
+          <tr>
+            <td><code class="id">{{.Name}}</code></td>
+            <td class="fs-sm">{{if .Model}}<span class="badge">{{.Model}}</span>{{else}}<span class="subtle">—</span>{{end}}</td>
+            <td class="fs-sm muted">{{.Description}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-foot">
+    <span class="fs-sm muted">
+      {{len .Agents}} agent(s). All share this project's memory — Silo isolates per
+      project, not per agent, so agents in one repo see each other's context.
+    </span>
+  </div>
+</div>
+{{else if .AgentErr}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">Could not scan for agents: {{.AgentErr}}</div>
+</div>
+{{end}}
+
 {{if .Config}}
 <div class="card">
   <div class="card-head">
