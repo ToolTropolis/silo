@@ -75,6 +75,7 @@ verified; the backlog lives where it can be prioritised.
 | [NAV-120](https://linear.app/navjyot-labs/issue/NAV-120) | Install path — `silo-mcp` unshipped, `silo-admin` undocumented, `weed` unusable against the dev stack |
 | [NAV-121](https://linear.app/navjyot-labs/issue/NAV-121) | Correctness debt — stale-replay clobber, `silo-distil` cache, LRU, conditional revalidation |
 | [NAV-122](https://linear.app/navjyot-labs/issue/NAV-122) | Operator gaps — credential retrieval, fleet view, teardown flow, vocabulary |
+| [NAV-123](https://linear.app/navjyot-labs/issue/NAV-123) | Distilator vs Dreams — run lifecycle, cancellation, input bounds, cost, promote conflicts |
 
 **Closed since this file was written:** the MCP server exists and is verified end to
 end; agent tokens are minted, hashed, and revocable; the wizard starts from a repository
