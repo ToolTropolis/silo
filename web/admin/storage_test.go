@@ -7,16 +7,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/registry"
 )
 
 type fakeMemoryLister struct {
 	paths []string
 	err   error
+	// versions is newest-first, matching the DurableBackend contract, so index 0
+	// is the head the redaction view must refuse.
+	versions    []backend.ObjectVersion
+	versionsErr error
 }
 
 func (f *fakeMemoryLister) ListPaths(context.Context, string, string) ([]string, error) {
 	return f.paths, f.err
+}
+
+func (f *fakeMemoryLister) ListVersions(context.Context, string, string) ([]backend.ObjectVersion, error) {
+	return f.versions, f.versionsErr
 }
 
 func storageFixture(t *testing.T, mem MemoryLister, d DaemonAdmin) *httptest.Server {

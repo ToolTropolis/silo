@@ -1,0 +1,169 @@
+{{define "title"}}Redact — {{.Project}}{{end}}
+
+{{define "body"}}
+<div class="page-head">
+  <div>
+    <h1>Redact a version</h1>
+    <p class="sub">
+      Remove a leaked secret from <code class="id">{{.Project}}</code>'s history.
+      The content is destroyed permanently; a record of what was removed is kept
+      in the registry.
+    </p>
+  </div>
+  <a class="btn" href="/project?project={{.Project}}">Back to project</a>
+</div>
+
+{{if .Flash}}
+<div class="notice {{if .FlashErr}}danger{{else}}ok{{end}}">
+  <div class="n-body">{{.Flash}}</div>
+</div>
+{{end}}
+
+{{if .VersionsErr}}
+<div class="card">
+  <div class="card-body">
+    <div class="notice danger">
+      <span class="n-ico i-fail">{{template "ico-alert" .}}</span>
+      <div class="n-body">{{.VersionsErr}}</div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{if not .Path}}
+  {{/* No path chosen yet — pick one. */}}
+  <div class="card">
+    <div class="card-head"><h2>Choose a memory</h2></div>
+    {{if .Paths}}
+    <div class="card-body tight">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Path</th><th></th></tr></thead>
+          <tbody>
+          {{range .Paths}}
+            <tr>
+              <td><code class="id">{{.}}</code></td>
+              <td class="actions">
+                <a class="btn btn-sm" href="/redact?project={{$.Project}}&path={{. | urlquery}}">
+                  View versions
+                </a>
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {{else}}
+    <div class="card-body"><p class="subtle">This project has no stored memory yet.</p></div>
+    {{end}}
+  </div>
+{{else}}
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Versions of <code class="id">{{.Path}}</code></h2>
+    </div>
+
+    {{if not .CanRedact}}
+    <div class="card-body">
+      <div class="notice warn">
+        <div class="n-body">
+          Redaction is not configured on this console, so versions are shown read-only.
+        </div>
+      </div>
+    </div>
+    {{end}}
+
+    {{if .Versions}}
+    <div class="card-body tight">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Version</th><th>State</th><th></th></tr>
+          </thead>
+          <tbody>
+          {{range .Versions}}
+            <tr>
+              <td><code class="id">{{.VersionID}}</code></td>
+              <td>
+                {{if .IsHead}}
+                  <span class="badge warn">current</span>
+                {{else}}
+                  <span class="badge">historical</span>
+                {{end}}
+              </td>
+              <td class="actions">
+                {{if .IsHead}}
+                  {{/* The head cannot be redacted: removing it would silently
+                       revert the path to older content. Disabled here rather
+                       than refused on submit, so the constraint is visible
+                       before the operator commits to it. */}}
+                  <span class="subtle fs-sm">write a replacement first</span>
+                {{else if $.CanRedact}}
+                  <details>
+                    <summary class="btn btn-sm btn-danger">Redact</summary>
+                    <form method="post" action="/redact/apply" class="stack" style="margin-top:10px">
+                      <input type="hidden" name="project" value="{{$.Project}}">
+                      <input type="hidden" name="path" value="{{$.Path}}">
+                      <input type="hidden" name="version" value="{{.VersionID}}">
+                      <label class="fs-sm">
+                        Reason (recorded permanently)
+                        <input type="text" name="reason" required
+                               placeholder="e.g. contained an AWS access key">
+                      </label>
+                      <label class="fs-sm">
+                        Type <code class="id">{{.VersionID}}</code> to confirm
+                        <input type="text" name="confirm" required autocomplete="off">
+                      </label>
+                      <button class="btn btn-sm btn-danger" type="submit">
+                        Destroy this version permanently
+                      </button>
+                    </form>
+                  </details>
+                {{end}}
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {{else}}
+    <div class="card-body"><p class="subtle">No versions found for this path.</p></div>
+    {{end}}
+  </div>
+
+  {{if .Redactions}}
+  <div class="card">
+    <div class="card-head">
+      <h2>Already redacted</h2>
+      <p class="sub">
+        These versions no longer exist. The record is kept here because the
+        content it describes is gone.
+      </p>
+    </div>
+    <div class="card-body tight">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Version</th><th>Reason</th><th>When</th><th>By</th></tr>
+          </thead>
+          <tbody>
+          {{range .Redactions}}
+            <tr>
+              <td><code class="id">{{.VersionID}}</code></td>
+              <td>{{.Reason}}</td>
+              <td class="fs-sm muted">{{.RedactedAt}}</td>
+              <td class="fs-sm muted">{{if .RedactedBy}}{{.RedactedBy}}{{else}}—{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+{{end}}
+{{end}}

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/registry"
 )
 
@@ -96,6 +97,7 @@ type Server struct {
 	dashboardURL string
 	// memory lists what a project's bucket actually holds. Optional.
 	memory MemoryLister
+	redact Redactor
 	// tracker holds in-flight provisioning progress, so the wizard can show
 	// which layer failed rather than only that something did.
 	tracker   *provisionTracker
@@ -132,12 +134,28 @@ type Config struct {
 	DashboardURL string
 	// Memory lists a project's stored object paths for the storage view.
 	Memory MemoryLister
+	// Redact destroys leaked versions. Optional: without it the console shows
+	// version history but offers no redaction control.
+	Redact Redactor
 }
 
-// MemoryLister reads the object keys in a project's bucket. Read-only and
-// keys-only: the console shows structure, not content.
+// MemoryLister reads the object keys in a project's bucket. Keys-only: the
+// console shows structure, not content.
 type MemoryLister interface {
 	ListPaths(ctx context.Context, projectID, prefix string) ([]string, error)
+	// ListVersions is what the redaction view renders — an operator picking a
+	// version to destroy has to see the history to choose one.
+	ListVersions(ctx context.Context, projectID, path string) ([]backend.ObjectVersion, error)
+}
+
+// Redactor destroys one version's content and records that it happened.
+//
+// Deliberately not on MemoryLister: that is the read surface, and folding an
+// irreversible delete into it would make every future implementation of the
+// read path capable of destroying data.
+type Redactor interface {
+	RedactVersion(ctx context.Context, projectID, path, versionID, reason, actor string) error
+	ListRedactions(ctx context.Context, projectID, path string) ([]registry.Redaction, error)
 }
 
 // TokenMinter issues agent tokens. Narrow on purpose: the console mints and
@@ -167,6 +185,7 @@ func NewServer(cfg Config) (*Server, error) {
 		mcpBinary:       cfg.MCPBinary,
 		dashboardURL:    strings.TrimSuffix(cfg.DashboardURL, "/"),
 		memory:          cfg.Memory,
+		redact:          cfg.Redact,
 		tracker:         newProvisionTracker(),
 		templates:       views,
 		mux:             http.NewServeMux(),
@@ -189,6 +208,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/projects", s.handleProjects)
 	s.mux.HandleFunc("/project", s.handleProject)
 	s.mux.HandleFunc("/browse", s.handleBrowse)
+	s.mux.HandleFunc("/redact", s.handleRedactView)
+	s.mux.HandleFunc("/redact/apply", s.handleRedact)
 	s.mux.HandleFunc("/lookup", s.handleLookup)
 	s.mux.HandleFunc("/tokens/mint", s.handleMintToken)
 	s.mux.HandleFunc("/tokens/revoke", s.handleRevokeToken)
@@ -276,6 +297,7 @@ var viewTitles = map[string]string{
 // contentViews are every page rendered inside the app shell.
 var contentViews = []string{
 	"cache.html", "settings.html", "projects.html", "project.html", "browse.html", "lookup.html",
+	"redact.html",
 	"wizard_name.html", "wizard_checks.html", "wizard_review.html", "wizard_connect.html",
 	"wizard_status.html", "wizard_done.html",
 }

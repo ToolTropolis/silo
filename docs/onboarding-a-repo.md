@@ -352,6 +352,31 @@ Not built, and not needed for an MCP-speaking runtime:
 
 ---
 
+## Redacting a leaked secret
+
+A credential written into memory is in that object version forever, and the
+`Instructions` warning against storing secrets is persuasion, not a control.
+The console removes one version permanently: **Projects → a project → Redact a
+leaked version**, or `/redact?project=<id>`.
+
+Pick the path, pick a historical version, give a reason, and type the version ID
+to confirm. The content is destroyed; the rest of the history is untouched.
+
+Three things worth knowing before you use it:
+
+- **The current version cannot be redacted.** Removing it would silently revert
+  the path to older content. Write a clean replacement first, then redact the
+  version that leaked.
+- **It is not reversible and there is no tombstone.** SeaweedFS deletes a
+  version outright — there is no way to blank one in place — so the bytes really
+  are gone. That is the point when a credential leaks.
+- **The audit survives the content.** Who redacted what, when, and why is
+  recorded in rqlite, not beside the object, so destroying the object cannot
+  destroy the evidence. Those rows are never deleted.
+
+Rotate the leaked credential regardless. Redaction removes it from Silo; it does
+nothing about wherever else it has already been read.
+
 ## Decommissioning
 
 Teardown is deliberately manual — one confirmed layer per invocation, in order.

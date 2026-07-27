@@ -199,6 +199,13 @@
       {{if .Objects}}
         <pre class="snippet" style="max-height:280px;overflow:auto">{{range .Objects}}{{.}}
 {{end}}</pre>
+        {{/* Redaction is the remedy when a secret reaches memory: it removes one
+             version's content permanently while the rest of the history stays
+             intact. Linked from here because this is where an operator is
+             already looking at what the bucket holds. */}}
+        <p class="fs-sm" style="margin-top:8px">
+          <a href="/redact?project={{.Project}}">Redact a leaked version →</a>
+        </p>
       {{else}}
         <p class="fs-sm subtle">No memory stored yet.</p>
       {{end}}

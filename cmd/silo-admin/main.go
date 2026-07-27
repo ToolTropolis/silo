@@ -136,6 +136,13 @@ func run(args []string) error {
 		cfg.Memory = prov.Onboarder.Backend
 		cfg.BackendProbe = prov.BackendProbe()
 		cfg.CredsProbe = prov.CredsProbe()
+		// Redaction destroys content, so it lives here rather than in the
+		// read-only dashboard, and it needs the same admin credential that
+		// gates every other destructive action.
+		cfg.Redact = &consoleRedactor{
+			daemon: daemon.New(prov.Onboarder.Backend, nil, reg, nil).WithRedactionAudit(reg),
+			store:  reg,
+		}
 	} else {
 		fmt.Println("silo-admin: no S3 admin credentials; onboarding and teardown are disabled")
 	}
@@ -281,6 +288,26 @@ func newProvisioner(ctx context.Context, c provisionerConfig) (*webadmin.Onboard
 		o.Cache = &daemonPurger{client: webadmin.NewDaemonClient(c.daemonAddr)}
 	}
 	return &webadmin.OnboarderProvisioner{Onboarder: o, Registry: c.registry}, nil
+}
+
+// consoleRedactor gives the console the redaction pair it needs: the destroy
+// path from the daemon, and the audit listing from the registry.
+//
+// It builds a Daemon with a nil cache on purpose. RedactVersion never touches
+// the cache — a redacted version is never the head, and the cache only ever
+// holds head content — so wiring one here would mean opening bbolt in a second
+// process and contending for the lock the daemon already holds.
+type consoleRedactor struct {
+	daemon *daemon.Daemon
+	store  registry.RedactionStore
+}
+
+func (c *consoleRedactor) RedactVersion(ctx context.Context, projectID, path, versionID, reason, actor string) error {
+	return c.daemon.RedactVersion(ctx, projectID, path, versionID, reason, actor)
+}
+
+func (c *consoleRedactor) ListRedactions(ctx context.Context, projectID, path string) ([]registry.Redaction, error) {
+	return c.store.ListRedactions(ctx, projectID, path)
 }
 
 // daemonPurger adapts the console's daemon client to the CachePurger seam that
