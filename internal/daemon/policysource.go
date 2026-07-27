@@ -90,20 +90,24 @@ func (p *PolicySource) Policy(projectID string) cache.EvictPolicy {
 	return policyFromSettings(registry.Resolve(project, fleet, p.flags))
 }
 
-// MaxEntryBytes returns the per-entry write cap for a project, or 0 for
-// unlimited. It implements EntryLimitSource.
+// MaxEntryBytes returns the per-entry write cap for a project and whether one
+// is set at all. It implements EntryLimitSource.
+//
+// The bool preserves the distinction the nullable column exists for: an
+// explicit 0 means "reject every write", and collapsing it into the same value
+// as "unset" would turn a lockdown into unlimited.
 //
 // Shares the resolution path with Policy rather than querying separately: the
 // cap inherits the same per-project -> fleet -> flag precedence, the same
 // bounded refresh, and the same last-known-good behaviour when the registry is
 // briefly unreachable. Falling back to "unlimited" on a blip would drop the
 // guard exactly when nobody could see why.
-func (p *PolicySource) MaxEntryBytes(projectID string) int64 {
+func (p *PolicySource) MaxEntryBytes(projectID string) (int64, bool) {
 	if p.settings == nil {
 		if p.flags.MaxEntryBytes != nil {
-			return *p.flags.MaxEntryBytes
+			return *p.flags.MaxEntryBytes, true
 		}
-		return 0
+		return 0, false
 	}
 	p.refresh()
 
@@ -113,9 +117,9 @@ func (p *PolicySource) MaxEntryBytes(projectID string) int64 {
 	p.mu.Unlock()
 
 	if v := registry.Resolve(project, fleet, p.flags).MaxEntryBytes; v != nil {
-		return *v
+		return *v, true
 	}
-	return 0
+	return 0, false
 }
 
 // Refresh forces the next Policy call to re-read the registry, so a console

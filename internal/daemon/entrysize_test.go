@@ -13,10 +13,18 @@ import (
 	"github.com/tooltropolis/silo/internal/cache"
 )
 
-// fixedLimit is an EntryLimitSource with one cap for every project.
+// fixedLimit is an EntryLimitSource with one cap for every project. The bool
+// mirrors the real source: a cap is set unless the source says otherwise.
 type fixedLimit int64
 
-func (f fixedLimit) MaxEntryBytes(string) int64 { return int64(f) }
+func (f fixedLimit) MaxEntryBytes(string) (int64, bool) { return int64(f), true }
+
+// unsetLimit is a source with no policy at any level, which is what an
+// unconfigured fleet looks like. Distinct from fixedLimit(0), which is an
+// operator explicitly rejecting every write.
+type unsetLimit struct{}
+
+func (unsetLimit) MaxEntryBytes(string) (int64, bool) { return 0, false }
 
 func newCappedDaemon(t *testing.T, be *fakeBackend, limit int64) *Daemon {
 	t.Helper()
@@ -93,14 +101,45 @@ func TestEntrySize_BoundaryIsInclusive(t *testing.T) {
 	}
 }
 
-// Zero means unlimited, matching how EvictPolicy reads its own zero values. An
-// unconfigured daemon must not silently reject every write.
-func TestEntrySize_ZeroMeansUnlimited(t *testing.T) {
-	d := newCappedDaemon(t, &fakeBackend{}, 0)
+// An UNSET cap means unlimited: an unconfigured daemon must not silently reject
+// every write.
+func TestEntrySize_UnsetMeansUnlimited(t *testing.T) {
+	c, err := cache.NewBoltCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	d := New(&fakeBackend{}, c, newGenRegistry(), nil).WithEntryLimits(unsetLimit{})
 
 	if _, err := d.SafeWrite(context.Background(), "proj-a", "memory/big.md",
 		put(strings.Repeat("x", 10_000)), "agent", ""); err != nil {
-		t.Errorf("a zero cap must mean unlimited, got %v", err)
+		t.Errorf("an unset cap must mean unlimited, got %v", err)
+	}
+}
+
+// An EXPLICIT zero rejects every write. This is the lockdown control an operator
+// reaches for after a leak, and it is what the nullable column, the migration
+// comment, and the console tooltip all promise. It previously resolved to
+// "unlimited" — the exact opposite — because the source returned a bare int64
+// that could not tell an explicit 0 from an absent value.
+func TestEntrySize_ExplicitZeroRejectsEverything(t *testing.T) {
+	d := newCappedDaemon(t, &fakeBackend{}, 0)
+
+	for _, size := range []int{0, 1, 1000} {
+		_, err := d.SafeWrite(context.Background(), "proj-a", "memory/x.md",
+			put(strings.Repeat("x", size)), "agent", "")
+		if !errors.Is(err, ErrEntryTooLarge) {
+			t.Errorf("a %d-byte write against an explicit zero cap = %v, want a refusal",
+				size, err)
+		}
+	}
+
+	// The message must not read as a size complaint: nothing is too large for a
+	// zero cap, writes are simply disabled.
+	_, err := d.SafeWrite(context.Background(), "proj-a", "memory/x.md",
+		put("x"), "agent", "")
+	if err == nil || !strings.Contains(err.Error(), "disabled by policy") {
+		t.Errorf("error %v should say writes are disabled by policy", err)
 	}
 }
 

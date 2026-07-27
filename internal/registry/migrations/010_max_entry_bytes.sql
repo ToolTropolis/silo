@@ -14,6 +14,12 @@
 -- all of that for one integer.
 --
 -- Nullable like every other value column here: NULL means "inherit from the
--- next level", and 0 is a real policy value meaning "reject every write". Those
--- must stay distinguishable, which a NOT NULL DEFAULT 0 would destroy.
+-- next level", and 0 is a real policy value meaning "reject every write" — the
+-- lockdown an operator reaches for after a leak. Those must stay
+-- distinguishable, which a NOT NULL DEFAULT 0 would destroy.
+--
+-- The distinction has to survive the whole way to the daemon, not just this
+-- table: EntryLimitSource.MaxEntryBytes returns (limit, set) for exactly this
+-- reason. An earlier version returned a bare int64, which collapsed an explicit
+-- 0 into "unset" and silently turned a lockdown into unlimited.
 ALTER TABLE project_settings ADD COLUMN max_entry_bytes INTEGER;

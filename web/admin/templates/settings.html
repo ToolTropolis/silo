@@ -52,7 +52,7 @@
                        value="{{.BytesValue}}" placeholder="inherit" title="e.g. 536870912 or 512MiB"></td>
             <td><input form="f-{{.Project}}" class="compact" type="text" name="max_entry_bytes"
                        value="{{.EntryBytesValue}}" placeholder="inherit"
-                       title="Largest single memory entry, e.g. 102400 or 100KiB. Rejects the write; not retention."></td>
+                       title="Largest single memory entry, e.g. 102400 or 100KiB. Rejects the write; not retention. 0 disables writes entirely; leave blank to inherit."></td>
             <td class="fs-sm muted">
               {{if .UpdatedAt}}{{.UpdatedAt}}<div class="subtle">by {{.UpdatedBy}}</div>{{else}}—{{end}}
             </td>

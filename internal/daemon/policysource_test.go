@@ -202,15 +202,17 @@ func TestPolicySource_MaxEntryBytesPrecedence(t *testing.T) {
 		fleet   *int64
 		flag    int64
 		want    int64
+		wantSet bool
 	}{
-		{"project wins over fleet and flag", i64(100), i64(200), 300, 100},
-		{"fleet wins over flag", nil, i64(200), 300, 200},
-		{"flag is the fallback", nil, nil, 300, 300},
-		{"nothing set is unlimited", nil, nil, 0, 0},
+		{"project wins over fleet and flag", i64(100), i64(200), 300, 100, true},
+		{"fleet wins over flag", nil, i64(200), 300, 200, true},
+		{"flag is the fallback", nil, nil, 300, 300, true},
+		{"nothing set at any level", nil, nil, 0, 0, false},
 		// An explicit zero is a real value meaning "reject every write" and must
 		// not be mistaken for "inherit" — the whole reason the columns are
-		// nullable.
-		{"an explicit project zero beats a fleet cap", i64(0), i64(200), 300, 0},
+		// nullable. The bool is what carries that distinction out of here: a
+		// bare 0 return would be indistinguishable from the unset row above.
+		{"an explicit project zero beats a fleet cap", i64(0), i64(200), 300, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings := &fakeSettings{}
@@ -222,8 +224,13 @@ func TestPolicySource_MaxEntryBytesPrecedence(t *testing.T) {
 			p := NewPolicySource(settings, cache.EvictPolicy{}, time.Minute, nil).
 				WithEntryLimitFlag(tc.flag)
 
-			if got := p.MaxEntryBytes("proj-a"); got != tc.want {
+			got, set := p.MaxEntryBytes("proj-a")
+			if got != tc.want {
 				t.Errorf("MaxEntryBytes = %d, want %d", got, tc.want)
+			}
+			if set != tc.wantSet {
+				t.Errorf("MaxEntryBytes set = %v, want %v — an explicit zero must "+
+					"stay distinguishable from no policy at all", set, tc.wantSet)
 			}
 		})
 	}
@@ -239,12 +246,12 @@ func TestPolicySource_MaxEntryBytesKeepsLastKnownOnFailure(t *testing.T) {
 	}, nil)
 
 	p := NewPolicySource(settings, cache.EvictPolicy{}, time.Nanosecond, nil)
-	if got := p.MaxEntryBytes("proj-a"); got != 100 {
+	if got, _ := p.MaxEntryBytes("proj-a"); got != 100 {
 		t.Fatalf("setup: MaxEntryBytes = %d, want 100", got)
 	}
 
 	settings.set(nil, errors.New("rqlite unreachable"))
-	if got := p.MaxEntryBytes("proj-a"); got != 100 {
+	if got, _ := p.MaxEntryBytes("proj-a"); got != 100 {
 		t.Errorf("MaxEntryBytes = %d after a registry failure, want the last known 100 — "+
 			"falling back to unlimited would drop the cap during an outage", got)
 	}

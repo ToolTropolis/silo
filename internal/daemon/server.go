@@ -134,6 +134,13 @@ type syncResponse struct {
 // before a shutdown or a teardown, where the question is whether it is safe to
 // destroy something. Scoped to the token's project like every other route.
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	// authorize, not authorizeWrite, and deliberately so: a drain adds no
+	// content, it only flushes writes that were already accepted through
+	// handleWrite — which read-only tokens cannot reach. Nothing a read-only
+	// caller can do puts bytes in the queue, so triggering a drain changes the
+	// timing of someone else's authorized writes and nothing else. Requiring a
+	// write token here would instead stop a read-only agent from answering "is
+	// my project safe to tear down?", which is a read-shaped question.
 	grant, err := s.authorize(r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)

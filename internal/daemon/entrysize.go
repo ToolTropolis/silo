@@ -21,8 +21,15 @@ var ErrEntryTooLarge = errors.New("daemon: entry exceeds the size limit")
 // per-project -> fleet -> flag precedence and last-known-good-on-failure
 // behaviour as the retention policy.
 type EntryLimitSource interface {
-	// MaxEntryBytes returns the cap in bytes, or 0 for unlimited.
-	MaxEntryBytes(projectID string) int64
+	// MaxEntryBytes returns the cap in bytes and whether one is set at all.
+	//
+	// The bool is load-bearing and not a convenience. A cap of 0 is a real
+	// policy — "reject every write", the control an operator reaches for after
+	// a leak — and it is stored as a nullable column precisely so it stays
+	// distinguishable from "unset". Returning a bare int64 collapsed the two
+	// and made an explicit 0 mean unlimited: the exact opposite of what the
+	// operator asked for.
+	MaxEntryBytes(projectID string) (limit int64, set bool)
 }
 
 // WithEntryLimits configures the per-entry size cap. Optional: a daemon without
@@ -42,12 +49,23 @@ func (d *Daemon) checkEntrySize(projectID, path string, size int) error {
 	if d.entryLimits == nil {
 		return nil
 	}
-	limit := d.entryLimits.MaxEntryBytes(projectID)
-	if limit <= 0 {
-		// Zero means unlimited, matching how EvictPolicy reads its own zero
-		// values. A project that genuinely wants to reject every write sets a
-		// read-only token instead — expressing that as "max 0 bytes" would make
-		// an unconfigured daemon indistinguishable from a locked-down one.
+	limit, set := d.entryLimits.MaxEntryBytes(projectID)
+	if !set {
+		// No policy at any level: unlimited, which is what an unconfigured
+		// daemon has always done.
+		return nil
+	}
+	if limit == 0 {
+		// An explicit zero rejects everything. Distinct from unset, and stated
+		// separately so the message does not read as a size complaint about a
+		// zero-byte limit.
+		return fmt.Errorf("%w: writes to %q are disabled by policy (max entry size is 0)",
+			ErrEntryTooLarge, path)
+	}
+	if limit < 0 {
+		// Negative is not expressible through the console and has no meaning;
+		// treat it as unset rather than rejecting every write on a typo in a
+		// hand-edited registry row.
 		return nil
 	}
 	if int64(size) > limit {

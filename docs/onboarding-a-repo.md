@@ -256,6 +256,12 @@ Precedence is per-project → fleet → flag, so a console value takes effect wi
 restarting a daemon. It is picked up on the next policy refresh, which shares
 `--evict-interval` (5m by default).
 
+**Blank and `0` mean different things.** Blank inherits from the next level down;
+`0` is an explicit policy that refuses *every* write to that project, which is
+the lockdown to reach for after a leak. `--max-entry-bytes 0` is the exception —
+a flag cannot express "explicitly zero", so it reads as unset and a project or
+fleet value still applies.
+
 An oversized write is refused with `413` before it reaches the backend, so no
 version is created, and the message names both the actual and permitted sizes.
 The cap applies during a backend outage too — otherwise an outage would be the
