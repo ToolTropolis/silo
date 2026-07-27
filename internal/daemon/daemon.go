@@ -30,6 +30,10 @@ type Daemon struct {
 	// entryLimits caps the size of a single write (optional): see
 	// WithEntryLimits. Nil means no limit.
 	entryLimits EntryLimitSource
+
+	// redactions records destroyed versions (optional): see
+	// WithRedactionAudit. Nil refuses redaction outright.
+	redactions RedactionRecorder
 }
 
 // New constructs a Daemon from its dependencies. Leader election is opt-in via

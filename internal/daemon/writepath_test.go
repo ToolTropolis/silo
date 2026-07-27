@@ -189,3 +189,9 @@ func TestSafeWrite_ReportsDurableWhenBackendUp(t *testing.T) {
 		t.Errorf("queue depth = %d after a durable write, want 0", depth)
 	}
 }
+
+// DeleteVersion is unsupported: this fake keeps no version history, so a
+// redaction test must use versionedBackend instead of silently passing here.
+func (f *fakeBackend) DeleteVersion(context.Context, string, string, string) error {
+	return errors.New("fakeBackend does not keep version history")
+}

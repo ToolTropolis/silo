@@ -276,3 +276,9 @@ func TestSyncProject_DoesNotDoubleEnqueueOnMidDrainOutage(t *testing.T) {
 			"(each unsynced write buffered exactly once)", depth)
 	}
 }
+
+// DeleteVersion is unsupported: this fake keeps no version history, so a
+// redaction test must use versionedBackend instead of silently passing here.
+func (m *mapBackend) DeleteVersion(context.Context, string, string, string) error {
+	return errors.New("mapBackend does not keep version history")
+}

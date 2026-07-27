@@ -226,6 +226,31 @@ func (s *SeaweedFS) ListVersions(ctx context.Context, projectID, path string) ([
 	return versions, nil
 }
 
+// DeleteVersion destroys one version's bytes. Verified against SeaweedFS: the
+// named version disappears from ListVersions and every other version of the
+// path stays readable.
+func (s *SeaweedFS) DeleteVersion(ctx context.Context, projectID, path, versionID string) error {
+	if versionID == "" {
+		// Without a version ID this is DeleteObject, which creates a delete
+		// marker and hides the whole path — a very different and much worse
+		// outcome than the caller asked for.
+		return fmt.Errorf("backend: delete version %s/%s: %w", projectID, path, ErrNoVersionID)
+	}
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(path),
+		VersionId: aws.String(versionID),
+	})
+	if err != nil {
+		return fmt.Errorf("backend: delete version %s/%s@%s: %w", bucket, path, versionID, err)
+	}
+	return nil
+}
+
 func (s *SeaweedFS) Delete(ctx context.Context, projectID, path string) error {
 	bucket, err := bucketFor(projectID)
 	if err != nil {
