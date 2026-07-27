@@ -106,7 +106,11 @@ func (r *Rqlite) ensureSchema(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+
+	// Runs after the migrations because it depends on 004's column existing,
+	// and in Go because rqlite cannot mint per-row randomness — see
+	// migrations/008_backfill_generation.sql for why.
+	return r.backfillGenerations(ctx)
 }
 
 // appliedMigrations returns the set of migrations already recorded as applied.

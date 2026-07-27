@@ -19,6 +19,7 @@ PROJECT="${SILO_DEMO_PROJECT:-demo}"
 TOKEN="${SILO_DEMO_TOKEN:-demo-token}"
 PORT="${SILO_DEMO_PORT:-8500}"
 DASH_PORT="${SILO_DEMO_DASHBOARD_PORT:-8600}"
+ADMIN_PORT="${SILO_DEMO_ADMIN_PORT:-8700}"
 API="http://127.0.0.1:${PORT}"
 COMPOSE="deploy/docker-compose.yaml"
 INSTALL_URL="https://raw.githubusercontent.com/ToolTropolis/silo/main/docs/install.sh"
@@ -30,11 +31,11 @@ step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 run()  { printf '    \033[2m$ %s\033[0m\n' "$*"; eval "$@"; }
 note() { printf '    %s\n' "$*"; }
 
-# Stop the daemon/dashboard this script started. Only ever kills PIDs it
+# Stop the daemon/dashboard/console this script started. Only ever kills PIDs it
 # recorded, so an unrelated silod a user is running by hand is left alone.
 stop_recorded() {
   local name pidfile pid
-  for name in silod dashboard; do
+  for name in silod dashboard admin; do
     pidfile="${RUN_DIR}/${name}.pid"
     [ -f "$pidfile" ] || continue
     pid="$(cat "$pidfile")"
@@ -80,6 +81,17 @@ if lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "       Stop it, or re-run with SILO_DEMO_PORT=<other port>." >&2
     exit 1
   fi
+fi
+
+# Same check for the console, which is started late: discovering the clash after
+# five steps of setup wastes the whole run. The dashboard is left unguarded —
+# it is the one surface where attaching to an already-running instance is
+# harmless, since it is read-only.
+if lsof -nP -iTCP:"${ADMIN_PORT}" -sTCP:LISTEN >/dev/null 2>&1 &&
+   ! { [ -f "${RUN_DIR}/admin.pid" ] && kill -0 "$(cat "${RUN_DIR}/admin.pid")" 2>/dev/null; }; then
+  echo "ERROR: something is already listening on port ${ADMIN_PORT} (the console)." >&2
+  echo "       Stop it, or re-run with SILO_DEMO_ADMIN_PORT=<other port>." >&2
+  exit 1
 fi
 
 step "1/6  Starting the stack (SeaweedFS, rqlite x3, Vault)"
@@ -143,7 +155,11 @@ fi
 
 step "5/6  Starting the daemon"
 note "runs as silo-runtime: object access only, cannot create or delete buckets"
-run "./bin/silod --listen '127.0.0.1:${PORT}' --tokens '${TOKEN}=${PROJECT}' > '${RUN_DIR}/silod.log' 2>&1 &"
+# --rqlite is what lets the daemon resolve a project's cache generation. Without
+# it the cache is never bound, so the read path refuses to fall back to it during
+# a backend outage — the demo would cache nothing and the offline story would be
+# untestable.
+run "./bin/silod --listen '127.0.0.1:${PORT}' --tokens '${TOKEN}=${PROJECT}' --rqlite 'http://localhost:4001' > '${RUN_DIR}/silod.log' 2>&1 &"
 echo $! > "${RUN_DIR}/silod.pid"
 
 # Wait for readiness rather than assuming; a fixed sleep races on a cold cache.
@@ -181,10 +197,24 @@ curl -s -X POST "${API}/v1/write" \
 ./bin/silo-dashboard --listen "127.0.0.1:${DASH_PORT}" > "${RUN_DIR}/dashboard.log" 2>&1 &
 echo $! > "${RUN_DIR}/dashboard.pid"
 
+# The operator console. Unlike the dashboard this surface can create and destroy
+# projects, so it is loopback-only and token-guarded even here — a TCP listener
+# without --admin-token is refused outright. The token is printed rather than
+# fixed: a well-known demo token is the kind of thing that survives into a real
+# deployment.
+ADMIN_TOKEN="${SILO_DEMO_ADMIN_TOKEN:-$(head -c 18 /dev/urandom | base64 | tr -d '/+=')}"
+SILO_ADMIN_TOKEN="$ADMIN_TOKEN" ./bin/silo-admin \
+  --listen "127.0.0.1:${ADMIN_PORT}" \
+  --dashboard "http://127.0.0.1:${DASH_PORT}" \
+  --agent-daemon "${API}" > "${RUN_DIR}/admin.log" 2>&1 &
+echo $! > "${RUN_DIR}/admin.pid"
+
 printf '\n'
 bold "Silo is running."
 printf '\n'
 note "Dashboard   http://127.0.0.1:${DASH_PORT}   (memory/notes.md now has 2 versions)"
+note "Console     http://127.0.0.1:${ADMIN_PORT}   (onboard a repo, cache policy, teardown)"
+note "  token     ${ADMIN_TOKEN}"
 note "API         ${API}"
 note "Logs        ${RUN_DIR}/silod.log"
 printf '\n'

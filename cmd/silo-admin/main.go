@@ -26,6 +26,7 @@ import (
 	"github.com/tooltropolis/silo/internal/admin"
 	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/daemon"
+	"github.com/tooltropolis/silo/internal/devstack"
 	"github.com/tooltropolis/silo/internal/kms"
 	"github.com/tooltropolis/silo/internal/registry"
 	webadmin "github.com/tooltropolis/silo/web/admin"
@@ -76,6 +77,9 @@ func run(args []string) error {
 	if *mcpBinary == "" {
 		*mcpBinary = resolveMCPBinary()
 	}
+
+	applyDevDefaults(*backendEndpoint, *rqliteAddrs, *vaultAddr, *filerAddr,
+		vaultToken, s3AccessKey, s3SecretKey)
 
 	if err := checkListenSafety(*listen, *token, *allowRemote); err != nil {
 		return err
@@ -158,6 +162,35 @@ func run(args []string) error {
 		fmt.Printf("silo-admin: http://%s (token required)\n", *listen)
 	}
 	return httpSrv.Serve(ln)
+}
+
+// applyDevDefaults fills unset credentials with the local dev-stack values, but
+// only when every endpoint is loopback. It mirrors siloctl's function of the
+// same name — the console needs the same admin credential for the same reason,
+// since onboarding and teardown are bucket lifecycle operations.
+//
+// The gate is the point. Defaulting these unconditionally would put
+// "dev-only-token" and a working S3 admin key into a released binary, where
+// they are convenient enough that nobody notices them authenticating against
+// something real. A non-local console still states its credentials explicitly.
+//
+// Only empty values are filled, so an explicit flag or environment variable
+// always wins.
+func applyDevDefaults(backendEndpoint, rqliteAddrs, vaultAddr, filerAddr string,
+	vaultToken, s3AccessKey, s3SecretKey *string) {
+
+	if !devstack.IsLocal(backendEndpoint, rqliteAddrs, vaultAddr, filerAddr) {
+		return
+	}
+	if *vaultToken == "" {
+		*vaultToken = devstack.VaultToken
+	}
+	if *s3AccessKey == "" {
+		*s3AccessKey = devstack.AdminKey
+	}
+	if *s3SecretKey == "" {
+		*s3SecretKey = devstack.AdminSecret
+	}
 }
 
 // checkListenSafety refuses the configurations that would expose a

@@ -154,3 +154,58 @@ func TestResolveMCPBinary_FallsBackToBareName(t *testing.T) {
 		t.Errorf("resolveMCPBinary() = %q, want the bare name as a fallback", got)
 	}
 }
+
+// The console needs the S3 admin credential to onboard or tear down. Against
+// the dev stack those are the values bootstrap-dev.sh just provisioned, so
+// requiring them to be re-typed only produces a console that silently cannot
+// provision.
+func TestApplyDevDefaults_FillsLocalCredentials(t *testing.T) {
+	var vaultToken, accessKey, secretKey string
+	applyDevDefaults("http://localhost:8333", "http://localhost:4001",
+		"http://localhost:8201", "localhost:8888",
+		&vaultToken, &accessKey, &secretKey)
+
+	if vaultToken == "" || accessKey == "" || secretKey == "" {
+		t.Fatalf("loopback endpoints should be filled, got token=%q access=%q secret=%q",
+			vaultToken, accessKey, secretKey)
+	}
+}
+
+// The gate is the security-relevant half: a console pointed at a real cluster
+// must not fall back to a credential compiled into the binary.
+func TestApplyDevDefaults_RefusesNonLocalEndpoints(t *testing.T) {
+	for _, tc := range []struct {
+		name                          string
+		backend, rqlite, vault, filer string
+	}{
+		{"remote backend", "http://s3.example.com", "http://localhost:4001", "http://localhost:8201", "localhost:8888"},
+		{"remote rqlite", "http://localhost:8333", "http://rqlite.example.com", "http://localhost:8201", "localhost:8888"},
+		{"remote vault", "http://localhost:8333", "http://localhost:4001", "https://vault.example.com", "localhost:8888"},
+		{"remote filer", "http://localhost:8333", "http://localhost:4001", "http://localhost:8201", "filer.example.com:8888"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var vaultToken, accessKey, secretKey string
+			applyDevDefaults(tc.backend, tc.rqlite, tc.vault, tc.filer,
+				&vaultToken, &accessKey, &secretKey)
+
+			if vaultToken != "" || accessKey != "" || secretKey != "" {
+				t.Errorf("a non-local endpoint must not receive baked-in credentials, "+
+					"got token=%q access=%q secret=%q", vaultToken, accessKey, secretKey)
+			}
+		})
+	}
+}
+
+// An explicit credential always wins, so an operator can point a local console
+// at a non-default identity without the defaults overwriting it.
+func TestApplyDevDefaults_DoesNotOverrideExplicitValues(t *testing.T) {
+	vaultToken, accessKey, secretKey := "mine", "MYKEY", "MYSECRET"
+	applyDevDefaults("http://localhost:8333", "http://localhost:4001",
+		"http://localhost:8201", "localhost:8888",
+		&vaultToken, &accessKey, &secretKey)
+
+	if vaultToken != "mine" || accessKey != "MYKEY" || secretKey != "MYSECRET" {
+		t.Errorf("explicit values were overwritten: token=%q access=%q secret=%q",
+			vaultToken, accessKey, secretKey)
+	}
+}

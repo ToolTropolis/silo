@@ -5,8 +5,6 @@ package admin
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -225,15 +223,9 @@ func runCompensations(comps []func() error) error {
 
 // newGeneration mints an opaque identifier for one incarnation of a project.
 //
-// Random rather than derived: a timestamp collides on a fast re-onboard and can
-// be reproduced by a restore, and the credential and key refs are cleared by
-// teardown before the record is deleted (and rotating a key must not invalidate
-// a live cache). 128 bits of randomness makes collision not worth reasoning
-// about.
+// Delegates to registry.NewGeneration so onboarding and the pre-004 backfill
+// mint the same shape from one implementation — a divergence here would be
+// invisible until a cache failed to bind.
 func newGeneration() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("mint generation: %w", err)
-	}
-	return hex.EncodeToString(b[:]), nil
+	return registry.NewGeneration()
 }
