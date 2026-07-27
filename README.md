@@ -74,10 +74,6 @@ and building from source.
 
 - **Go 1.26+**
 - **Docker** (for the local dependency stack)
-- **`weed`** (SeaweedFS CLI) — *only* to onboard a project, which issues its
-  bucket-scoped S3 credential via `weed shell`. `brew install seaweedfs`, or run it
-  inside the dev-stack container (see [docs/QUICKSTART.md](docs/QUICKSTART.md#prerequisites)).
-  Serving memory never needs it.
 
 ## Running the stack locally
 
@@ -147,10 +143,7 @@ export SILO_S3_ACCESS_KEY=SILOADMIN SILO_S3_SECRET_KEY=SILOADMINSECRET
 
 # 1. Provision an isolated project: bucket + per-project SSE key + registry
 #    record + a credential scoped Read/Write to that bucket only.
-#    --weed-binary is needed because credential issuance shells out to `weed`,
-#    which lives in the SeaweedFS container rather than on the host.
-siloctl onboard --project=proj-11 --vault-token=dev-only-token \
-  --weed-binary=./deploy/weed-docker.sh
+siloctl onboard --project=proj-11 --vault-token=dev-only-token
 
 # 2. Agents read/write memory through the SDK against a running daemon.
 silod --listen 127.0.0.1:8500 --tokens "agent-token=proj-11"

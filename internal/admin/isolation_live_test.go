@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -17,26 +16,6 @@ import (
 
 	"github.com/tooltropolis/silo/internal/backend"
 )
-
-// dockerWeedRunner runs `weed shell` inside the dev SeaweedFS container. The
-// container name is overridable via SILO_TEST_SEAWEED_CONTAINER. This is the
-// live-test transport; production configures a real weed binary + filer address
-// through SeaweedConfig instead.
-func dockerWeedRunner(t *testing.T) shellRunner {
-	t.Helper()
-	container := os.Getenv("SILO_TEST_SEAWEED_CONTAINER")
-	if container == "" {
-		container = "deploy-seaweedfs-1"
-	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not on PATH — skipping live isolation test")
-	}
-	return func(ctx context.Context, command string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", container, "weed", "shell")
-		cmd.Stdin = strings.NewReader(command + "\n")
-		return cmd.CombinedOutput()
-	}
-}
 
 func s3ClientFor(endpoint, ak, sk string) *s3.Client {
 	return s3.New(s3.Options{
@@ -71,16 +50,15 @@ func isDenied(err error) bool {
 // project A is denied (403) on project B's bucket, for both read and write.
 //
 // It onboards two real projects (each getting a bucket-scoped SeaweedFS
-// identity via the real SeaweedCredentialIssuer), then drives raw signed S3
+// identity via the real FilerCredentialIssuer), then drives raw signed S3
 // requests with A's credential against B's bucket and asserts they're refused.
 func TestCrossProjectIsolation(t *testing.T) {
 	s3Endpoint := envOr("SILO_TEST_S3_ENDPOINT", "http://localhost:8333")
 	requireS3(t, s3Endpoint)
 
 	ctx := context.Background()
-	run := dockerWeedRunner(t)
 	store := newMemSecretStore()
-	issuer := &SeaweedCredentialIssuer{run: run, secret: store}
+	issuer := NewFilerCredentialIssuer(filerAddr(), store)
 
 	adminAK, adminSK := testAdminCreds()
 	be, err := backend.NewSeaweedFS(backend.Config{
@@ -175,4 +153,12 @@ func splitCred(v string) (access, secret string) {
 		return v[:i], v[i+1:]
 	}
 	return v, ""
+}
+
+// filerAddr is the filer the live tests issue credentials against.
+func filerAddr() string {
+	if v := os.Getenv("SILO_TEST_FILER"); v != "" {
+		return v
+	}
+	return "localhost:8888"
 }

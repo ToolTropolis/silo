@@ -17,10 +17,6 @@ stack.
 
 - Go 1.26+, Docker
 - The dev stack running and bootstrapped (below)
-- `weed`, the SeaweedFS CLI — onboarding issues the project's bucket-scoped S3
-  credential through it. Against the Docker stack, run it inside the container;
-  a host-native `weed` cannot reach the container addresses SeaweedFS advertises.
-  See [QUICKSTART.md](QUICKSTART.md#prerequisites).
 
 Throughout, replace `myrepo` with your project ID. Use something stable and
 DNS-safe — it becomes the bucket name (`silo-myrepo`).
@@ -54,9 +50,7 @@ export SILO_S3_SECRET_KEY=SILOADMINSECRET
 
 go build -o ./bin/siloctl ./cmd/siloctl
 
-./bin/siloctl onboard --project=myrepo \
-  --vault-token=dev-only-token \
-  --weed-binary=./deploy/weed-docker.sh
+./bin/siloctl onboard --project=myrepo --vault-token=dev-only-token
 ```
 
 This provisions four things in one command, rolling back cleanly if any step
@@ -68,11 +62,6 @@ fails partway:
 | 2 | A per-project SSE encryption key in Vault |
 | 3 | A versioned S3 bucket, `silo-myrepo` |
 | 4 | An S3 credential scoped **Read/Write to that bucket only** |
-
-> **Why `--weed-binary`:** credential issuance shells out to `weed`, which ships
-> inside the SeaweedFS container rather than on your host.
-> `deploy/weed-docker.sh` wraps `docker exec`. Omitting it fails with
-> `executable file not found in $PATH`.
 
 > **Why the S3 credentials are required:** onboarding creates buckets. Once any
 > identity exists in SeaweedFS, anonymous access is disabled cluster-wide — a
@@ -315,7 +304,6 @@ one-step-per-invocation rule.
 | Symptom | Cause |
 |---|---|
 | `create bucket: 403 AccessDenied` | `SILO_S3_ACCESS_KEY`/`SECRET_KEY` unset, or `bootstrap-dev.sh` not run. |
-| `issue credential: exec "weed": not found` | Missing `--weed-binary=./deploy/weed-docker.sh`. |
 | `Vault is sealed` / `connection refused` on 8201 | Re-run `deploy/bootstrap-dev.sh`; Vault seals on restart. |
 | `leader not found` from rqlite | Cluster still forming — wait ~15s after `up`. If it persists, check all three `rqlite` containers are running. |
 | SDK returns `ErrUnauthorized` | Token isn't in the daemon's `--tokens` map. |

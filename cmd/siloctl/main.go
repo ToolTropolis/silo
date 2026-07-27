@@ -91,9 +91,8 @@ func runOnboard(args []string) error {
 	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
 	vaultAddr := fs.String("vault", "http://localhost:8201", "Vault address")
 	vaultToken := fs.String("vault-token", os.Getenv("VAULT_TOKEN"), "Vault token (or VAULT_TOKEN env)")
-	weedBinary := fs.String("weed-binary", "weed", "path to the weed binary used to issue scoped credentials")
-	weedFiler := fs.String("weed-filer", "localhost:8888", "SeaweedFS filer host:port for credential issuance")
-	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master host:port for credential issuance")
+	filerAddr := fs.String("filer", "localhost:8888",
+		"SeaweedFS filer host:port; scoped credentials are issued over its HTTP API")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -101,7 +100,7 @@ func runOnboard(args []string) error {
 		return fmt.Errorf("--project is required")
 	}
 	applyDevDefaults(*backendEndpoint, *rqliteAddrs, *vaultAddr,
-		vaultToken, s3AccessKey, s3SecretKey, weedBinary)
+		vaultToken, s3AccessKey, s3SecretKey)
 
 	if *vaultToken == "" {
 		return fmt.Errorf("Vault token required (--vault-token or VAULT_TOKEN)")
@@ -142,11 +141,7 @@ func runOnboard(args []string) error {
 	// identity via `weed shell` s3.configure, scoped Read,Write on that
 	// project's bucket only — the enforced isolation boundary. The secret key
 	// is stored in Vault (km), never on the registry.
-	creds := admin.NewSeaweedCredentialIssuer(admin.SeaweedConfig{
-		WeedBinary: *weedBinary,
-		Filer:      *weedFiler,
-		Master:     *weedMaster,
-	}, km)
+	creds := admin.NewFilerCredentialIssuer(*filerAddr, km)
 
 	o := &admin.Onboarder{
 		Registry: reg,
@@ -304,9 +299,8 @@ func runTeardown(args []string) error {
 	rqliteAddrs := fs.String("rqlite", "http://localhost:4001", "comma-separated rqlite node addresses")
 	vaultAddr := fs.String("vault", "http://localhost:8201", "Vault address")
 	vaultToken := fs.String("vault-token", os.Getenv("VAULT_TOKEN"), "Vault token (or VAULT_TOKEN env)")
-	weedBinary := fs.String("weed-binary", "weed", "path to the weed binary used to revoke scoped credentials")
-	weedFiler := fs.String("weed-filer", "localhost:8888", "SeaweedFS filer host:port")
-	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master host:port")
+	filerAddr := fs.String("filer", "localhost:8888",
+		"SeaweedFS filer host:port; scoped credentials are revoked over its HTTP API")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -323,7 +317,7 @@ func runTeardown(args []string) error {
 		return err
 	}
 	applyDevDefaults(*backendEndpoint, *rqliteAddrs, *vaultAddr,
-		vaultToken, s3AccessKey, s3SecretKey, weedBinary)
+		vaultToken, s3AccessKey, s3SecretKey)
 
 	if *vaultToken == "" {
 		return fmt.Errorf("Vault token required (--vault-token or VAULT_TOKEN)")
@@ -394,11 +388,7 @@ func runTeardown(args []string) error {
 		return fmt.Errorf("connect backend: %w", err)
 	}
 
-	creds := admin.NewSeaweedCredentialIssuer(admin.SeaweedConfig{
-		WeedBinary: *weedBinary,
-		Filer:      *weedFiler,
-		Master:     *weedMaster,
-	}, km)
+	creds := admin.NewFilerCredentialIssuer(*filerAddr, km)
 
 	o := &admin.Onboarder{Registry: reg, KMS: km, Backend: be, Creds: creds, Settings: reg, Tokens: reg}
 	if *adminSocket != "" {
@@ -483,7 +473,7 @@ func readLine(in io.Reader) (string, error) {
 //
 // Only empty values are filled, so an explicit flag always wins.
 func applyDevDefaults(backendEndpoint, rqliteAddrs, vaultAddr string,
-	vaultToken, s3AccessKey, s3SecretKey, weedBinary *string) {
+	vaultToken, s3AccessKey, s3SecretKey *string) {
 
 	if !devstack.IsLocal(backendEndpoint, rqliteAddrs, vaultAddr) {
 		return
@@ -496,11 +486,6 @@ func applyDevDefaults(backendEndpoint, rqliteAddrs, vaultAddr string,
 	}
 	if *s3SecretKey == "" {
 		*s3SecretKey = devstack.AdminSecret
-	}
-	// "weed" is the flag's own default and only resolves inside the container,
-	// so on the dev stack it is never the right value.
-	if *weedBinary == "" || *weedBinary == "weed" {
-		*weedBinary = devstack.WeedBinary
 	}
 }
 

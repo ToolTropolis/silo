@@ -19,26 +19,6 @@ a memory file you wrote and read back through the API.
 | Go 1.26+ | `go version` | [go.dev/dl](https://go.dev/dl/) |
 | Docker | `docker ps` | Docker Desktop, and make sure it's *running* |
 | `jq` (for the examples) | `jq --version` | `brew install jq` |
-| `weed` (onboarding only) | `weed version` | `brew install seaweedfs`, or see the note below |
-
-**About `weed`.** Onboarding a project issues a *per-project S3 credential*, scoped
-`Read,Write` to that project's bucket alone — the isolation boundary Silo enforces.
-Creating that identity is not an S3 API call; it goes through SeaweedFS's own admin
-channel (`weed shell` → `s3.configure`), so `siloctl onboard` needs the `weed` binary.
-Reads and writes never touch it, so a daemon serving memory does not need it at all.
-
-Against the Docker dev stack there is a wrinkle: SeaweedFS advertises its
-*container* address (e.g. `172.24.0.2:9333`), which a `weed` running on your host
-cannot route to — it will hang rather than fail. So run it inside the container:
-
-```sh
-SW=$(docker compose -f deploy/docker-compose.yaml ps -q seaweedfs)
-docker exec -i "$SW" weed shell -master=localhost:9333
-```
-
-`deploy/demo.sh` already does the equivalent, which is why the demo path needs no
-`weed` on your PATH. Install it natively when you point Silo at a SeaweedFS cluster
-whose advertised addresses you can actually reach.
 
 ---
 
@@ -60,7 +40,7 @@ defines them — but not the whole repo. Five files from `deploy/` are enough:
 ```bash
 mkdir -p silo-demo/deploy && cd silo-demo
 BASE=https://raw.githubusercontent.com/ToolTropolis/silo/main/deploy
-for f in docker-compose.yaml bootstrap-dev.sh demo.sh vault.hcl weed-docker.sh; do
+for f in docker-compose.yaml bootstrap-dev.sh demo.sh vault.hcl; do
   curl -fsSL "$BASE/$f" -o "deploy/$f"
 done
 chmod +x deploy/*.sh
@@ -139,10 +119,8 @@ go build -o ./bin/siloctl ./cmd/siloctl
 Expect: `onboarded project "quickstart": bucket, per-project key, registry record, and credential provisioned.`
 
 > **Where did the credentials go?** When every endpoint is loopback, `siloctl`
-> fills in the dev stack's throwaway Vault token, S3 keys, and the
-> `deploy/weed-docker.sh` wrapper (issuing a scoped credential shells out to
-> `weed`, which lives *inside* the container). Point any endpoint at a
-> non-local host and those defaults switch off — a real deployment always
+> fills in the dev stack's throwaway Vault token and S3 keys. Point any endpoint
+> at a non-local host and those defaults switch off — a real deployment always
 > states its own credentials.
 
 ## 4. Run the daemon
@@ -268,7 +246,6 @@ docker compose -f deploy/docker-compose.yaml down -v  # wipe everything
 | `address already in use` | Another `silod` owns that port. Find it with `lsof -nP -iTCP:8500 -sTCP:LISTEN`, then `pkill -f silod` — or pick a different `--listen` port. |
 | `Vault is sealed` | Re-run `deploy/bootstrap-dev.sh` |
 | `create bucket: 403 AccessDenied` | Bootstrap not run — or a non-local endpoint, which disables the dev credential defaults |
-| `exec "weed": not found` | A non-loopback endpoint turns the dev defaults off. Pass `--weed-binary=./deploy/weed-docker.sh` explicitly. |
 | `leader not found` | rqlite still forming — wait ~15 s |
 | Daemon returns `unauthorized` | Token isn't in `--tokens` |
 | Daemon returns `not found` for a path you wrote | Wrong project's token — tokens are scoped to one project |

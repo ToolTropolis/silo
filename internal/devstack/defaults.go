@@ -23,7 +23,6 @@ const (
 	VaultToken    = "dev-only-token"
 	AdminKey      = "SILOADMIN"
 	AdminSecret   = "SILOADMINSECRET"
-	WeedBinary    = "./deploy/weed-docker.sh"
 	RuntimeKey    = "SILORUNTIME"
 	RuntimeSecret = "SILORUNTIMESECRET"
 )

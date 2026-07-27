@@ -57,9 +57,8 @@ func run(args []string) error {
 		"S3 ADMIN secret key (or SILO_S3_SECRET_KEY)")
 	vaultAddr := fs.String("vault", "http://localhost:8201", "Vault address")
 	vaultToken := fs.String("vault-token", os.Getenv("VAULT_TOKEN"), "Vault token (or VAULT_TOKEN)")
-	weedBinary := fs.String("weed-binary", "weed", "path to the weed binary, for issuing scoped credentials")
-	weedFiler := fs.String("weed-filer", "localhost:8888", "SeaweedFS filer address")
-	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master address")
+	filerAddr := fs.String("filer", "localhost:8888",
+		"SeaweedFS filer host:port; scoped credentials are issued over its HTTP API")
 	agentDaemon := fs.String("agent-daemon", "http://127.0.0.1:8500",
 		"the daemon address written into a repo's .mcp.json — the address an AGENT reaches, which is not --daemon (this console's admin socket)")
 	dashboardURL := fs.String("dashboard", os.Getenv("SILO_DASHBOARD_URL"),
@@ -121,9 +120,7 @@ func run(args []string) error {
 			secretKey:       *s3SecretKey,
 			vaultAddr:       *vaultAddr,
 			vaultToken:      *vaultToken,
-			weedBinary:      *weedBinary,
-			weedFiler:       *weedFiler,
-			weedMaster:      *weedMaster,
+			filerAddr:       *filerAddr,
 			daemonAddr:      *daemonAddr,
 		})
 		if err != nil {
@@ -207,14 +204,14 @@ func checkListenSafety(listen, token string, allowRemote bool) error {
 func isSocketPath(addr string) bool { return !strings.Contains(addr, ":") }
 
 type provisionerConfig struct {
-	registry                          registry.TenantRegistry
-	settings                          admin.SettingsRemover
-	tokens                            admin.TokenRevoker
-	backendEndpoint, backendRegion    string
-	accessKey, secretKey              string
-	vaultAddr, vaultToken             string
-	weedBinary, weedFiler, weedMaster string
-	daemonAddr                        string
+	registry                       registry.TenantRegistry
+	settings                       admin.SettingsRemover
+	tokens                         admin.TokenRevoker
+	backendEndpoint, backendRegion string
+	accessKey, secretKey           string
+	vaultAddr, vaultToken          string
+	filerAddr                      string
+	daemonAddr                     string
 }
 
 // newProvisioner wires the same Onboarder siloctl uses, so the console cannot
@@ -233,11 +230,7 @@ func newProvisioner(ctx context.Context, c provisionerConfig) (*webadmin.Onboard
 	if err != nil {
 		return nil, fmt.Errorf("connect backend: %w", err)
 	}
-	creds := admin.NewSeaweedCredentialIssuer(admin.SeaweedConfig{
-		WeedBinary: c.weedBinary,
-		Filer:      c.weedFiler,
-		Master:     c.weedMaster,
-	}, km)
+	creds := admin.NewFilerCredentialIssuer(c.filerAddr, km)
 
 	o := &admin.Onboarder{
 		Registry: c.registry,
