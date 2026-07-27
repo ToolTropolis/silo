@@ -105,6 +105,11 @@ if command -v go >/dev/null 2>&1 && [ -d ./cmd/siloctl ]; then
   run "go build -o ./bin/siloctl ./cmd/siloctl"
   run "go build -o ./bin/silod ./cmd/silod"
   run "go build -o ./bin/silo-dashboard ./cmd/silo-dashboard"
+  # silo-mcp is what actually connects a repo to Silo, and silo-admin is the
+  # operator console. A demo that ships neither leaves the user with storage
+  # they cannot reach from an agent.
+  run "go build -o ./bin/silo-mcp ./cmd/silo-mcp"
+  run "go build -o ./bin/silo-admin ./cmd/silo-admin"
 else
   step "3/6  Fetching the released binaries"
   if [ -d ./cmd/siloctl ]; then

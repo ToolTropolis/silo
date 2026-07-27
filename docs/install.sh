@@ -1,5 +1,6 @@
 #!/bin/sh
-# Install the Silo binaries (silod, siloctl, silo-distil, silo-dashboard).
+# Install the Silo binaries (silod, siloctl, silo-distil, silo-dashboard,
+# silo-mcp, silo-admin).
 #
 #   curl -fsSL https://raw.githubusercontent.com/ToolTropolis/silo/main/docs/install.sh | sh
 #
@@ -26,7 +27,7 @@
 set -eu
 
 REPO="ToolTropolis/silo"
-BINARIES="silod siloctl silo-distil silo-dashboard"
+BINARIES="silod siloctl silo-distil silo-dashboard silo-mcp silo-admin"
 INSTALL_DIR="${SILO_INSTALL_DIR:-$HOME/.silo/bin}"
 
 # ANSI only when stdout is a terminal — piped output stays clean.
@@ -229,6 +230,8 @@ esac
 
 info "siloctl --help        admin CLI (onboard, status, teardown)"
 info "silod --help          the daemon agents talk to"
+info "silo-mcp --help       connects a repo's agents to Silo over MCP"
+info "silo-admin --help     operator console: cache policy, onboarding, teardown"
 printf '\n'
 info "Silo needs a storage stack (SeaweedFS, rqlite, Vault). To try it locally:"
 printf '    %sgit clone https://github.com/%s.git && cd silo && deploy/demo.sh%s\n' "$DIM" "$REPO" "$R"
