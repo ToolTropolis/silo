@@ -200,6 +200,15 @@ func (s *Server) handleWrite(ctx context.Context, _ *mcp.CallToolRequest, in Wri
 	}
 
 	if err := s.memory.WriteAs(ctx, path, []byte(in.Content), in.Actor); err != nil {
+		if errors.Is(err, client.ErrTooLarge) {
+			// The daemon's message carries the actual and permitted sizes, so
+			// pass it through rather than restating it vaguely: an agent told
+			// only "too large" cannot tell whether to split the file in two or
+			// in fifty.
+			return errorResult(fmt.Sprintf(
+				"%v. Split it into several smaller focused files under separate paths.",
+				err)), WriteOutput{}, nil
+		}
 		if errors.Is(err, client.ErrReadOnly) {
 			// Say plainly that retrying cannot work. An agent told only "write
 			// failed" will try again, and again, for the rest of the session.

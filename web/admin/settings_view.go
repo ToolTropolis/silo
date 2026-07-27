@@ -23,8 +23,11 @@ type settingsRow struct {
 	TTLValue     string
 	EntriesValue string
 	BytesValue   string
-	UpdatedAt    string
-	UpdatedBy    string
+	// EntryBytesValue is the per-entry write cap, not retention: it bounds what
+	// may be written rather than what is kept.
+	EntryBytesValue string
+	UpdatedAt       string
+	UpdatedBy       string
 }
 
 // handleSettings renders the policy editor and applies changes.
@@ -91,6 +94,9 @@ func newSettingsRow(projectID string, s registry.CacheSettings, isFleet bool) se
 	}
 	if s.MaxBytes != nil {
 		row.BytesValue = strconv.FormatInt(*s.MaxBytes, 10)
+	}
+	if s.MaxEntryBytes != nil {
+		row.EntryBytesValue = strconv.FormatInt(*s.MaxEntryBytes, 10)
 	}
 	return row
 }
@@ -163,6 +169,13 @@ func parseSettingsForm(r *http.Request) (registry.CacheSettings, error) {
 			return out, err
 		}
 		out.MaxBytes = &n
+	}
+	if v := strings.TrimSpace(r.FormValue("max_entry_bytes")); v != "" {
+		n, err := parseSize(v)
+		if err != nil {
+			return out, fmt.Errorf("bad max entry size: %w", err)
+		}
+		out.MaxEntryBytes = &n
 	}
 	return out, nil
 }

@@ -189,3 +189,63 @@ func TestPolicySource_ConcurrentPolicyIsSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// The cap resolves through the same precedence as retention: per-project beats
+// fleet beats flag. A project override that did not win would let a fleet
+// default silently cap a project the operator had exempted.
+func TestPolicySource_MaxEntryBytesPrecedence(t *testing.T) {
+	i64 := func(n int64) *int64 { return &n }
+
+	for _, tc := range []struct {
+		name    string
+		project *int64
+		fleet   *int64
+		flag    int64
+		want    int64
+	}{
+		{"project wins over fleet and flag", i64(100), i64(200), 300, 100},
+		{"fleet wins over flag", nil, i64(200), 300, 200},
+		{"flag is the fallback", nil, nil, 300, 300},
+		{"nothing set is unlimited", nil, nil, 0, 0},
+		// An explicit zero is a real value meaning "reject every write" and must
+		// not be mistaken for "inherit" — the whole reason the columns are
+		// nullable.
+		{"an explicit project zero beats a fleet cap", i64(0), i64(200), 300, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := &fakeSettings{}
+			settings.set(map[string]registry.CacheSettings{
+				"proj-a":          {MaxEntryBytes: tc.project},
+				registry.FleetKey: {MaxEntryBytes: tc.fleet},
+			}, nil)
+
+			p := NewPolicySource(settings, cache.EvictPolicy{}, time.Minute, nil).
+				WithEntryLimitFlag(tc.flag)
+
+			if got := p.MaxEntryBytes("proj-a"); got != tc.want {
+				t.Errorf("MaxEntryBytes = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A registry blip must not drop the cap. Falling back to unlimited would remove
+// the guard exactly when nobody could see why.
+func TestPolicySource_MaxEntryBytesKeepsLastKnownOnFailure(t *testing.T) {
+	i64 := func(n int64) *int64 { return &n }
+	settings := &fakeSettings{}
+	settings.set(map[string]registry.CacheSettings{
+		"proj-a": {MaxEntryBytes: i64(100)},
+	}, nil)
+
+	p := NewPolicySource(settings, cache.EvictPolicy{}, time.Nanosecond, nil)
+	if got := p.MaxEntryBytes("proj-a"); got != 100 {
+		t.Fatalf("setup: MaxEntryBytes = %d, want 100", got)
+	}
+
+	settings.set(nil, errors.New("rqlite unreachable"))
+	if got := p.MaxEntryBytes("proj-a"); got != 100 {
+		t.Errorf("MaxEntryBytes = %d after a registry failure, want the last known 100 — "+
+			"falling back to unlimited would drop the cap during an outage", got)
+	}
+}

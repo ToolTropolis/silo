@@ -38,6 +38,20 @@ type PolicySource struct {
 	now      func() time.Time
 }
 
+// WithEntryLimitFlag sets the daemon's flag-level per-entry cap, the
+// lowest-precedence level. Zero leaves it unset so a fleet or project value
+// still applies; a positive value is used only when neither of those sets one.
+//
+// Separate from NewPolicySource's EvictPolicy because the cap is a write-path
+// limit, not retention, and cache.EvictPolicy has no field for it — threading
+// it through there would put a write concern into the eviction type.
+func (p *PolicySource) WithEntryLimitFlag(maxEntryBytes int64) *PolicySource {
+	if maxEntryBytes > 0 {
+		p.flags.MaxEntryBytes = &maxEntryBytes
+	}
+	return p
+}
+
 // NewPolicySource builds a resolver over the registry.
 //
 // A nil store means no registry-backed configuration: every project resolves to
@@ -74,6 +88,34 @@ func (p *PolicySource) Policy(projectID string) cache.EvictPolicy {
 	p.mu.Unlock()
 
 	return policyFromSettings(registry.Resolve(project, fleet, p.flags))
+}
+
+// MaxEntryBytes returns the per-entry write cap for a project, or 0 for
+// unlimited. It implements EntryLimitSource.
+//
+// Shares the resolution path with Policy rather than querying separately: the
+// cap inherits the same per-project -> fleet -> flag precedence, the same
+// bounded refresh, and the same last-known-good behaviour when the registry is
+// briefly unreachable. Falling back to "unlimited" on a blip would drop the
+// guard exactly when nobody could see why.
+func (p *PolicySource) MaxEntryBytes(projectID string) int64 {
+	if p.settings == nil {
+		if p.flags.MaxEntryBytes != nil {
+			return *p.flags.MaxEntryBytes
+		}
+		return 0
+	}
+	p.refresh()
+
+	p.mu.Lock()
+	project := p.known[projectID]
+	fleet := p.known[registry.FleetKey]
+	p.mu.Unlock()
+
+	if v := registry.Resolve(project, fleet, p.flags).MaxEntryBytes; v != nil {
+		return *v
+	}
+	return 0
 }
 
 // Refresh forces the next Policy call to re-read the registry, so a console

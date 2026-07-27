@@ -245,6 +245,25 @@ The wizard's **Connect** step always mints read-write, since a repo's own agents
 need to record what they learn. Mint read-only deliberately from the project
 page, where the token list shows every token's access alongside its label.
 
+### Capping entry size
+
+A single memory can be capped, so one agent cannot write a 50 MB file that blows
+out the local cache and every later read of that path. Set **Max entry** on the
+settings page — per project, or on `_fleet` for a default — or start the daemon
+with `--max-entry-bytes`.
+
+Precedence is per-project → fleet → flag, so a console value takes effect without
+restarting a daemon. It is picked up on the next policy refresh, which shares
+`--evict-interval` (5m by default).
+
+An oversized write is refused with `413` before it reaches the backend, so no
+version is created, and the message names both the actual and permitted sizes.
+The cap applies during a backend outage too — otherwise an outage would be the
+way around it, and the oversized entry would replay into the bucket on recovery.
+
+Prefer many small focused files to a few large ones: a write replaces the whole
+file, so a large one is re-sent in full on every update.
+
 A daemon started with `--rqlite` verifies these without a restart:
 
 ```bash
@@ -324,5 +343,6 @@ one-step-per-invocation rule.
 | `leader not found` from rqlite | Cluster still forming — wait ~15s after `up`. If it persists, check all three `rqlite` containers are running. |
 | SDK returns `ErrUnauthorized` | Token isn't in the daemon's `--tokens` map. |
 | SDK returns `ErrReadOnly` / daemon returns `403 token is read-only` | The token was minted read-only. It is valid — retrying will not help. Mint a read-write token if the write needs to persist. |
+| SDK returns `ErrTooLarge` / daemon returns `413 entry exceeds the size limit` | The content is over the project's per-entry cap. Split it across several paths, or raise **Max entry** on the settings page. |
 | SDK returns `ErrNotFound` for a path you wrote | Writing under a different project's token — tokens are scoped to one project. |
 | Distilator: `is a credential configured?` | Run `ant auth login`, then `ant auth status` to confirm the active source. |

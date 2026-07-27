@@ -1,0 +1,19 @@
+-- Per-entry write size cap.
+--
+-- Nothing bounded how large a single memory could be. One agent writing a 50 MB
+-- file would blow out the bbolt cache and every later read of that path; the
+-- eviction policy bounds the cache as a whole, not what one write may contain.
+-- Anthropic's managed-agent memory caps each memory at 100 kB for the same
+-- reason, and advises many small focused files over few large ones.
+--
+-- Lives in project_settings rather than a table of its own. The column is not
+-- cache retention — it is a write-path limit — but the machinery it needs is
+-- exactly what that table already feeds: PolicySource resolves per-project ->
+-- fleet -> flag precedence, keeps the last known-good view when rqlite blips,
+-- and refreshes on a bounded interval. A second table would mean duplicating
+-- all of that for one integer.
+--
+-- Nullable like every other value column here: NULL means "inherit from the
+-- next level", and 0 is a real policy value meaning "reject every write". Those
+-- must stay distinguishable, which a NOT NULL DEFAULT 0 would destroy.
+ALTER TABLE project_settings ADD COLUMN max_entry_bytes INTEGER;

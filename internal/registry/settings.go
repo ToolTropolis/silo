@@ -14,16 +14,26 @@ import (
 // their own.
 const FleetKey = "_fleet"
 
-// CacheSettings is one level of cache-retention configuration.
+// CacheSettings is one level of a project's storage policy.
+//
+// Named for the cache because retention was all it held originally;
+// MaxEntryBytes is a write-path limit rather than retention, and shares the
+// struct because it needs exactly the same precedence and refresh machinery
+// (see PolicySource). Renaming the type would churn every call site for no
+// behavioural gain.
 //
 // Every field is a pointer so "unset" is distinguishable from "set to zero".
 // The distinction is not academic here: zero is a meaningful policy value (a
-// TTL of zero means never cache), so a plain int64 could not express "inherit
-// from the next level down". Resolve relies on this.
+// TTL of zero means never cache, a MaxEntryBytes of zero rejects every write),
+// so a plain int64 could not express "inherit from the next level down".
+// Resolve relies on this.
 type CacheSettings struct {
 	TTL        *time.Duration
 	MaxEntries *int
 	MaxBytes   *int64
+	// MaxEntryBytes caps the size of a single memory entry. Unlike the fields
+	// above it bounds what may be written, not what is retained.
+	MaxEntryBytes *int64
 
 	UpdatedAt string
 	UpdatedBy string
@@ -32,7 +42,7 @@ type CacheSettings struct {
 // IsEmpty reports whether the settings carry no values at all, which is what a
 // project with no row looks like.
 func (s CacheSettings) IsEmpty() bool {
-	return s.TTL == nil && s.MaxEntries == nil && s.MaxBytes == nil
+	return s.TTL == nil && s.MaxEntries == nil && s.MaxBytes == nil && s.MaxEntryBytes == nil
 }
 
 // Resolve layers settings in precedence order, most specific first. Each field
@@ -53,6 +63,9 @@ func Resolve(levels ...CacheSettings) CacheSettings {
 		}
 		if out.MaxBytes == nil && l.MaxBytes != nil {
 			out.MaxBytes = l.MaxBytes
+		}
+		if out.MaxEntryBytes == nil && l.MaxEntryBytes != nil {
+			out.MaxEntryBytes = l.MaxEntryBytes
 		}
 	}
 	return out

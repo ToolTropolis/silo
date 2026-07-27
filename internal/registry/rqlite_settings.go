@@ -12,7 +12,8 @@ var _ SettingsStore = (*Rqlite)(nil)
 
 // settingsColumns is the standard select order, shared by Get and List so the
 // two cannot drift.
-const settingsColumns = `project_id, cache_ttl_secs, cache_max_entries, cache_max_bytes, updated_at, updated_by`
+const settingsColumns = `project_id, cache_ttl_secs, cache_max_entries, cache_max_bytes, ` +
+	`max_entry_bytes, updated_at, updated_by`
 
 func (r *Rqlite) GetSettings(ctx context.Context, projectID string) (CacheSettings, error) {
 	rows, err := r.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
@@ -59,7 +60,7 @@ func (r *Rqlite) PutSettings(ctx context.Context, projectID string, s CacheSetti
 	// Nil fields are bound as SQL NULL, which is what restores inheritance for
 	// that field. Binding 0 instead would silently pin the project to "never
 	// cache" — the exact confusion the nullable columns exist to prevent.
-	var ttl, maxEntries, maxBytes interface{}
+	var ttl, maxEntries, maxBytes, maxEntryBytes interface{}
 	if s.TTL != nil {
 		ttl = int64(*s.TTL / time.Second)
 	}
@@ -69,18 +70,24 @@ func (r *Rqlite) PutSettings(ctx context.Context, projectID string, s CacheSetti
 	if s.MaxBytes != nil {
 		maxBytes = *s.MaxBytes
 	}
+	if s.MaxEntryBytes != nil {
+		maxEntryBytes = *s.MaxEntryBytes
+	}
 
 	_, err := r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
 		Query: `INSERT INTO project_settings
-			(project_id, cache_ttl_secs, cache_max_entries, cache_max_bytes, updated_at, updated_by)
-			VALUES (?, ?, ?, ?, ?, ?)
+			(project_id, cache_ttl_secs, cache_max_entries, cache_max_bytes,
+			 max_entry_bytes, updated_at, updated_by)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id) DO UPDATE SET
 				cache_ttl_secs = excluded.cache_ttl_secs,
 				cache_max_entries = excluded.cache_max_entries,
 				cache_max_bytes = excluded.cache_max_bytes,
+				max_entry_bytes = excluded.max_entry_bytes,
 				updated_at = excluded.updated_at,
 				updated_by = excluded.updated_by`,
-		Arguments: []interface{}{projectID, ttl, maxEntries, maxBytes, updatedAt, s.UpdatedBy},
+		Arguments: []interface{}{projectID, ttl, maxEntries, maxBytes, maxEntryBytes,
+			updatedAt, s.UpdatedBy},
 	})
 	if err != nil {
 		return fmt.Errorf("registry: put settings %q: %w", projectID, err)
@@ -125,6 +132,10 @@ func scanSettings(rows gorqlite.QueryResult) (string, CacheSettings, error) {
 	if n, ok := asInt64(m["cache_max_bytes"]); ok {
 		v := n
 		s.MaxBytes = &v
+	}
+	if n, ok := asInt64(m["max_entry_bytes"]); ok {
+		v := n
+		s.MaxEntryBytes = &v
 	}
 	return projectID, s, nil
 }

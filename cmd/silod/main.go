@@ -47,6 +47,9 @@ func run(args []string) error {
 	cacheTTL := fs.Duration("cache-ttl", 0, "discard cached entries older than this (0 = keep forever)")
 	cacheMaxEntries := fs.Int("cache-max-entries", 0, "cap cached paths per project (0 = unlimited)")
 	cacheMaxBytes := fs.Int64("cache-max-bytes", 0, "cap cached bytes per project (0 = unlimited)")
+	maxEntryBytes := fs.Int64("max-entry-bytes", 0,
+		"reject a single write larger than this many bytes (0 = unlimited). "+
+			"A per-project or fleet value set in the console takes precedence.")
 	evictInterval := fs.Duration("evict-interval", daemon.DefaultEvictInterval, "how often to apply the cache retention policy")
 	cacheConfigSource := fs.String("cache-config-source", "registry", "where cache retention policy comes from: \"registry\" (per-project, then fleet default, then these flags) or \"flags\" (pin this host to its flags, ignoring the console)")
 	tokenCacheTTL := fs.Duration("token-cache-ttl", daemon.DefaultTokenCacheTTL,
@@ -179,7 +182,21 @@ func run(args []string) error {
 	}
 
 	policies := daemon.NewPolicySource(settings, flagPolicy, *evictInterval,
-		func(format string, args ...any) { fmt.Printf(format+"\n", args...) })
+		func(format string, args ...any) { fmt.Printf(format+"\n", args...) }).
+		WithEntryLimitFlag(*maxEntryBytes)
+
+	// Attached whenever policy could come from the registry, even with no flag:
+	// a fleet cap written from the console must apply to a daemon started
+	// without one of its own.
+	if settings != nil || *maxEntryBytes > 0 {
+		d.WithEntryLimits(policies)
+		if *maxEntryBytes > 0 {
+			fmt.Printf("silod: per-entry write cap %d bytes (a console value takes precedence)\n",
+				*maxEntryBytes)
+		} else {
+			fmt.Println("silod: per-entry write cap from the registry, if one is set")
+		}
+	}
 
 	// The worker starts whenever policy could come from the registry, even with
 	// no flags set: a fleet default written from the console has to be applied

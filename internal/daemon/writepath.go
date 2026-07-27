@@ -67,6 +67,13 @@ func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit fun
 				return WriteDurable, bindErr
 			}
 			newContent := edit(nil)
+			// Checked on the queued path too. If the cap only applied when the
+			// backend was up, an outage would become the way around it — and
+			// the oversized entry would sit on local disk until the backend
+			// returned, then be replayed into the bucket anyway.
+			if limitErr := d.checkEntrySize(projectID, path, len(newContent)); limitErr != nil {
+				return WriteDurable, limitErr
+			}
 			if qErr := d.cache.Enqueue(ctx, projectID, cache.PendingWrite{
 				Path:      path,
 				Content:   newContent,
@@ -83,6 +90,13 @@ func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit fun
 		}
 
 		newContent := edit(current)
+		// Before the Put, so an oversized write never reaches the backend and
+		// never creates a version. Inside the retry loop rather than above it
+		// because edit() is what produces the content: on a CAS retry it runs
+		// again against fresher content and can produce a different size.
+		if limitErr := d.checkEntrySize(projectID, path, len(newContent)); limitErr != nil {
+			return WriteDurable, limitErr
+		}
 
 		_, err = d.backend.Put(ctx, projectID, path, newContent, backend.PutOptions{
 			IfMatchETag: ver.ETag,

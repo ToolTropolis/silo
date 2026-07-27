@@ -26,6 +26,10 @@ type Daemon struct {
 
 	// generations memoizes which incarnation of each project owns its cache.
 	generations *generations
+
+	// entryLimits caps the size of a single write (optional): see
+	// WithEntryLimits. Nil means no limit.
+	entryLimits EntryLimitSource
 }
 
 // New constructs a Daemon from its dependencies. Leader election is opt-in via

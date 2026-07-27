@@ -398,6 +398,13 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	outcome, err := s.daemon.SafeWrite(r.Context(), grant.ProjectID, req.Path,
 		func([]byte) []byte { return content }, actor, req.SessionID)
 	if err != nil {
+		if errors.Is(err, ErrEntryTooLarge) {
+			// 413, not 500: the request was understood and refused by policy.
+			// A 500 would tell the caller to retry something that can never
+			// succeed, and would hide a misconfigured cap as a server fault.
+			writeErr(w, http.StatusRequestEntityTooLarge, err)
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}

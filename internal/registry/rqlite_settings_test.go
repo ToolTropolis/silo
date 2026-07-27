@@ -166,3 +166,60 @@ func TestSettings_ListIncludesFleetDefaults(t *testing.T) {
 		t.Errorf("MaxEntries = %v, want 7", showInt(got.MaxEntries))
 	}
 }
+
+// The cap has to survive the round trip, and "unset" has to stay distinct from
+// an explicit zero — zero means reject every write, which is a real policy an
+// operator might set deliberately.
+func TestSettings_MaxEntryBytesRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	r := newLiveRegistry(t)
+	proj := uniqueSettingsID(t, r)
+
+	limit := int64(102400)
+	if err := r.PutSettings(ctx, proj, CacheSettings{MaxEntryBytes: &limit}); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+
+	got, err := r.GetSettings(ctx, proj)
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	if got.MaxEntryBytes == nil {
+		t.Fatal("MaxEntryBytes came back unset")
+	}
+	if *got.MaxEntryBytes != limit {
+		t.Errorf("MaxEntryBytes = %d, want %d", *got.MaxEntryBytes, limit)
+	}
+	// Setting only this field must not invent values for the others.
+	if got.TTL != nil || got.MaxEntries != nil || got.MaxBytes != nil {
+		t.Errorf("unset retention fields were populated: %+v", got)
+	}
+
+	// An explicit zero is a policy, not an absence.
+	zero := int64(0)
+	if err := r.PutSettings(ctx, proj, CacheSettings{MaxEntryBytes: &zero}); err != nil {
+		t.Fatalf("PutSettings zero: %v", err)
+	}
+	got, err = r.GetSettings(ctx, proj)
+	if err != nil {
+		t.Fatalf("GetSettings after zero: %v", err)
+	}
+	if got.MaxEntryBytes == nil {
+		t.Fatal("an explicit zero was stored as NULL — it would silently mean 'inherit'")
+	}
+	if *got.MaxEntryBytes != 0 {
+		t.Errorf("MaxEntryBytes = %d, want 0", *got.MaxEntryBytes)
+	}
+
+	// And clearing it restores inheritance.
+	if err := r.PutSettings(ctx, proj, CacheSettings{}); err != nil {
+		t.Fatalf("PutSettings clear: %v", err)
+	}
+	got, err = r.GetSettings(ctx, proj)
+	if err != nil {
+		t.Fatalf("GetSettings after clear: %v", err)
+	}
+	if got.MaxEntryBytes != nil {
+		t.Errorf("clearing left %d behind, want inheritance", *got.MaxEntryBytes)
+	}
+}

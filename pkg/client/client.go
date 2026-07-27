@@ -54,6 +54,14 @@ var ErrNotFound = errors.New("client: not found")
 // to the requested project.
 var ErrUnauthorized = errors.New("client: unauthorized")
 
+// ErrTooLarge is returned by Write when the content exceeds the project's
+// per-entry size cap.
+//
+// Distinct from a transport failure: the write was understood and refused, so
+// retrying the same content will never succeed. Split the content into smaller
+// files instead.
+var ErrTooLarge = errors.New("client: entry exceeds the size limit")
+
 // ErrReadOnly is returned by Write when the token authenticates but grants only
 // read access.
 //
