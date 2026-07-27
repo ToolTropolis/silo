@@ -5,6 +5,7 @@ package testsupport
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,6 +113,14 @@ func (m *MemBackend) Delete(_ context.Context, projectID, path string) error {
 	}
 	delete(m.objs, m.key(projectID, path))
 	return nil
+}
+
+// DeleteVersion is unsupported: MemBackend keeps no version history, so there
+// is nothing to delete a single version from. It errors rather than silently
+// succeeding, which would let a redaction test pass against a backend that
+// never stored versions in the first place.
+func (m *MemBackend) DeleteVersion(_ context.Context, _, _, _ string) error {
+	return errors.New("testsupport: MemBackend does not keep version history")
 }
 
 func (m *MemBackend) CreateBucket(context.Context, string) error { return nil }

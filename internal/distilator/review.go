@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/tooltropolis/silo/internal/daemon"
 )
 
 // ErrRunNotFound is returned when a run's proposal manifest doesn't exist.
@@ -19,7 +21,12 @@ var ErrProposalNotFound = errors.New("distilator: proposal not found in run")
 // than a plain store write) so an approved change gets the same ETag/versioning
 // treatment as any other write.
 type SafeWriter interface {
-	SafeWrite(ctx context.Context, projectID, path string, edit func([]byte) []byte, actor, sessionID string) error
+	// The daemon.WriteOutcome return distinguishes a durable write from one
+	// buffered locally because the backend was unreachable. Promotion treats
+	// the latter as a failure: a human approved specific content, and calling
+	// it promoted while it sits on local disk would misreport a reviewed change
+	// as landed.
+	SafeWrite(ctx context.Context, projectID, path string, edit func([]byte) []byte, actor, sessionID string) (daemon.WriteOutcome, error)
 }
 
 // Reviewer loads a run's proposals and promotes the approved ones.
@@ -110,11 +117,19 @@ func (r *Reviewer) Promote(ctx context.Context, projectID, runID string, approve
 		}
 
 		content := proposal.NewContent
-		err := r.writer.SafeWrite(ctx, projectID, proposal.Path,
+		outcome, err := r.writer.SafeWrite(ctx, projectID, proposal.Path,
 			func([]byte) []byte { return content },
 			"distilator", promotedFrom(runID))
 		if err != nil {
 			return promoted, fmt.Errorf("distilator: promote %q from run %q: %w", proposal.Path, runID, err)
+		}
+		// Stop rather than report a promotion that only reached local disk. The
+		// paths already returned did land, so the caller can see exactly how far
+		// the promotion got.
+		if outcome == daemon.WriteQueued {
+			return promoted, fmt.Errorf(
+				"distilator: promote %q from run %q: backend unreachable, the change was queued locally rather than promoted",
+				proposal.Path, runID)
 		}
 		promoted = append(promoted, proposal.Path)
 	}

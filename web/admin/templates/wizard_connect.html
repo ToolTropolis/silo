@@ -1,0 +1,153 @@
+{{define "body"}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    {{if .Token}}
+    {{/* Shown exactly once: only a hash is stored, so this cannot be recovered
+         from anywhere afterwards. Make that impossible to miss. */}}
+    <div class="card" style="border-color:var(--warn-line)">
+      <div class="card-head" style="background:var(--warn-soft);border-bottom-color:var(--warn-line)">
+        <div>
+          <h2>Copy this token now</h2>
+          <p class="hint">Only a hash is stored. This is the one and only time it can be shown.</p>
+        </div>
+        <span class="badge warn">{{.TokenLabel}}</span>
+      </div>
+      <div class="card-body">
+        <pre class="snippet" style="user-select:all">{{.Token}}</pre>
+        <p class="help">Put it in the shell that launches your agent:</p>
+        <pre class="snippet">export SILO_TOKEN={{.Token}}</pre>
+        <p class="help">
+          Lost it? Mint another below and revoke this one from the project page —
+          there is no way to retrieve it.
+        </p>
+      </div>
+    </div>
+    {{end}}
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>1. Issue an agent token</h2>
+          <p class="hint">Scopes an agent to <code class="id">{{.Project}}</code> and nothing else.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        {{if .CanMint}}
+        <form method="post" action="/onboard/mint">
+          <input type="hidden" name="project" value="{{.Project}}">
+          <input type="hidden" name="repo" value="{{.RepoPath}}">
+          <div class="field">
+            <label class="lbl" for="label">Label</label>
+            <div style="display:flex; gap:8px; max-width:460px">
+              <input type="text" id="label" name="label" placeholder="laptop" autocomplete="off">
+              <button class="btn btn-primary" type="submit">Mint token</button>
+            </div>
+            <p class="help">
+              Names this token so it can be revoked later without disturbing the others —
+              one per machine or CI job is a good habit.
+            </p>
+          </div>
+        </form>
+        {{else}}
+        <div class="notice warn">
+          <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+          <div class="n-body">
+            <strong>No token store configured.</strong>
+            <p>Start silo-admin with <code>--rqlite</code> to issue tokens from here.
+              You can still copy the config below and use a token from
+              <code>silod --tokens</code>.</p>
+          </div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>2. Add <code>.mcp.json</code> to a repo</h2>
+          <p class="hint">The agent runtime reads this and launches silo-mcp as a subprocess.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <form method="get" action="/onboard/connect">
+          <input type="hidden" name="project" value="{{.Project}}">
+          <div class="field">
+            <label class="lbl" for="repo">Repository path (optional)</label>
+            <div style="display:flex; gap:8px">
+              <input type="text" id="repo" name="repo" value="{{.RepoPath}}"
+                     placeholder="/Users/you/code/myrepo" autocomplete="off">
+              <button class="btn" type="submit">Preview</button>
+            </div>
+            <p class="help">
+              An absolute path on <em>this</em> machine. Leave it blank to copy the
+              config by hand instead.
+            </p>
+            {{if .PlanErr}}<p class="err">{{.PlanErr}}</p>{{end}}
+          </div>
+        </form>
+
+        {{with .Plan}}
+          {{if .Warning}}
+          <div class="notice warn">
+            <span class="n-ico i-warn">{{template "ico-warn-tri" $}}</span>
+            <div class="n-body">{{.Warning}}</div>
+          </div>
+          {{end}}
+
+          <div class="notice {{if .Conflict}}warn{{else}}info{{end}}">
+            <span class="n-ico">{{template "ico-alert" $}}</span>
+            <div class="n-body">
+              {{if .Conflict}}
+                <strong>This repo already has a "silo" server configured.</strong>
+                <p>Writing will replace that entry.</p>
+              {{else if .Exists}}
+                <strong>{{.Path}} exists and will be updated.</strong>
+                <p>Silo's entry is added; nothing else in the file is touched.</p>
+              {{else}}
+                <strong>{{.Path}} will be created.</strong>
+              {{end}}
+              {{if .OtherServers}}
+                <p>Preserved: {{range $i, $s := .OtherServers}}{{if $i}}, {{end}}<code>{{$s}}</code>{{end}}</p>
+              {{end}}
+            </div>
+          </div>
+        {{end}}
+
+        <div class="lbl" style="margin:14px 0 6px">Config</div>
+        <pre class="snippet" style="user-select:all">{{.Config}}</pre>
+        <p class="help">
+          The token is referenced as <code>${SILO_TOKEN}</code>, never written into the
+          file — <code>.mcp.json</code> is normally committed, and a token in it would be
+          a live credential in git.
+        </p>
+
+        {{with .Plan}}
+        <form method="post" action="/onboard/write" style="margin-top:14px">
+          <input type="hidden" name="project" value="{{$.Project}}">
+          <input type="hidden" name="repo" value="{{$.RepoPath}}">
+          {{if .Conflict}}
+          <label class="fs-sm" style="display:block; margin-bottom:8px">
+            <input type="checkbox" name="confirm_replace" value="yes" style="width:auto">
+            Replace the existing "silo" entry
+          </label>
+          {{end}}
+          <button class="btn btn-primary" type="submit">Write {{.Path}}</button>
+        </form>
+        {{end}}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-foot" style="border-top:0">
+        <a class="btn btn-ghost" href="/projects">Skip for now</a>
+        <a class="btn btn-primary" href="/onboard/done?project={{.Project}}">
+          Continue {{template "ico-arrow-right" .}}
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

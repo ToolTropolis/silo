@@ -1,0 +1,318 @@
+{{define "body"}}
+<p class="fs-sm" style="margin:-6px 0 16px">
+  <a href="/projects">{{template "ico-arrow-left" .}} All projects</a>
+</p>
+
+{{if .Token}}
+{{/* Shown exactly once: only a hash is stored, so this cannot be recovered
+     afterwards from anywhere. Make that impossible to miss. */}}
+<div class="card" style="border-color:var(--warn-line)">
+  <div class="card-head" style="background:var(--warn-soft);border-bottom-color:var(--warn-line)">
+    <div>
+      <h2>Copy this token now</h2>
+      <p class="hint">Only a hash is stored. This is the one and only time it can be shown.</p>
+    </div>
+    <span class="badge warn">{{.TokenLabel}}</span>
+  </div>
+  <div class="card-body">
+    <pre class="snippet" style="user-select:all">export SILO_TOKEN={{.Token}}</pre>
+  </div>
+</div>
+{{end}}
+
+{{if .DashboardURL}}
+<p class="fs-sm" style="margin:-8px 0 14px">
+  {{/* The dashboard already browses memory and version history; linking beats
+       rebuilding it in a surface that is meant to write config, not read data. */}}
+  <a href="{{.DashboardURL}}/memory?project={{.Project}}" target="_blank" rel="noopener">
+    Browse this project's memory in the dashboard →
+  </a>
+</p>
+{{end}}
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Status</div>
+    <div class="stat-value" style="font-size:16px">
+      <span class="badge {{if eq .Record.Status "active"}}ok{{else if eq .Record.Status "decommissioning"}}warn{{end}}">
+        <span class="dot"></span>{{.Record.Status}}
+      </span>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Repository</div>
+    <div class="stat-value mono" style="font-size:13px">
+      {{if .Record.RepoURL}}{{repoLabel .Record.RepoURL}}
+      {{else if .Record.RepoPath}}{{base .Record.RepoPath}}
+      {{else}}<span class="subtle" style="font-style:italic">not recorded</span>{{end}}
+    </div>
+    {{if .Record.RepoURL}}<div class="stat-note mono">{{.Record.RepoURL}}</div>
+    {{else if .Record.RepoPath}}<div class="stat-note mono">{{.Record.RepoPath}}</div>{{end}}
+  </div>
+  <div class="stat">
+    <div class="stat-label">Bucket</div>
+    <div class="stat-value mono" style="font-size:13px">
+      {{if .Record.BucketName}}{{.Record.BucketName}}{{else}}<span class="subtle">deleted</span>{{end}}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Live tokens</div>
+    <div class="stat-value {{if eq .LiveTokens 0}}warn{{end}}">{{.LiveTokens}}</div>
+    <div class="stat-note">{{if eq .LiveTokens 0}}no agent can reach this project{{else}}can reach this project{{end}}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Agent tokens</h2>
+      <p class="hint">Each scopes an agent to this project alone. Only hashes are stored.</p>
+    </div>
+  </div>
+
+  {{if .CanMint}}
+  <div class="card-body" style="border-bottom:1px solid var(--line)">
+    <form method="post" action="/tokens/mint">
+      <input type="hidden" name="project" value="{{.Project}}">
+      <div style="display:flex; gap:8px; max-width:460px; align-items:center">
+        <input type="text" name="label" placeholder="laptop, ci, teammate-name" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Mint token</button>
+      </div>
+      <label style="display:flex; gap:6px; align-items:center; margin-top:10px">
+        <input type="checkbox" name="read_only" value="1">
+        <span class="fs-sm">Read-only — this token can recall memory but never write it</span>
+      </label>
+      <p class="help">
+        One per machine or job, so a single leak is revoked without disturbing the rest.
+        Choose read-only for an agent that handles untrusted input: a prompt injection
+        cannot then plant content that later sessions read back as trusted memory.
+      </p>
+    </form>
+  </div>
+  {{end}}
+
+  {{if .TokensErr}}
+  <div class="card-body">
+    <div class="notice danger">
+      <span class="n-ico i-fail">{{template "ico-alert" .}}</span>
+      <div class="n-body">Could not list tokens: {{.TokensErr}}</div>
+    </div>
+  </div>
+  {{else if .Tokens}}
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Token</th>
+            <th>Access</th>
+            <th>Created</th>
+            <th>Last used</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Tokens}}
+          <tr>
+            <td>{{if .Label}}{{.Label}}{{else}}<span class="subtle">—</span>{{end}}</td>
+            <td><code class="id">{{.Display}}…</code></td>
+            <td>
+              {{/* Stated on every row rather than only on read-only ones: an
+                   operator auditing which tokens can write should not have to
+                   read absence as meaning. */}}
+              {{if .ReadOnly}}
+                <span class="badge">read-only</span>
+              {{else}}
+                <span class="badge warn">read-write</span>
+              {{end}}
+            </td>
+            <td class="fs-sm muted">
+              {{.CreatedAt}}
+              {{if .CreatedBy}}<div class="subtle">by {{.CreatedBy}}</div>{{end}}
+            </td>
+            <td class="fs-sm muted">
+              {{/* Never used is worth seeing: it is either a token nobody wired
+                   up, or one that can be revoked with no disruption. */}}
+              {{if .LastUsed}}{{.LastUsed}}{{else}}<span class="subtle">never used</span>{{end}}
+            </td>
+            <td>
+              {{if .Revoked}}
+                <span class="badge">revoked</span>
+                <div class="subtle fs-sm">{{.RevokedAt}}</div>
+              {{else}}
+                <span class="badge ok"><span class="dot"></span>live</span>
+              {{end}}
+            </td>
+            <td class="actions">
+              {{if not .Revoked}}
+              <form method="post" action="/tokens/revoke" class="inline"
+                    onsubmit="return confirm('Revoke this token?\n\nAny agent using it stops working within the daemon token-cache TTL. This cannot be undone: mint a new one instead.')">
+                <input type="hidden" name="project" value="{{$.Project}}">
+                <input type="hidden" name="hash" value="{{.Hash}}">
+                <button class="btn btn-sm btn-ghost" type="submit">Revoke</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    <div class="empty-title">No tokens yet</div>
+    <p>An agent needs one to read or write this project's memory.</p>
+  </div>
+  {{end}}
+</div>
+
+{{if or .Objects .CacheEntries .StorageErr}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Storage</h2>
+      <p class="hint">
+        The bucket is the durable copy. The cache is this host's local copy — it can
+        lag, be evicted, or hold a write the bucket has not seen yet.
+      </p>
+    </div>
+  </div>
+
+  {{if .StorageErr}}
+  <div class="card-body">
+    <div class="notice warn" style="margin:0">
+      <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+      <div class="n-body">Could not list the bucket: {{.StorageErr}}</div>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div>
+      <div class="lbl" style="margin-bottom:6px">
+        Bucket <code>{{.Record.BucketName}}</code>
+        <span class="badge" style="margin-left:6px">{{.ObjectCount}} object(s)</span>
+      </div>
+      {{if .Objects}}
+        <pre class="snippet" style="max-height:280px;overflow:auto">{{range .Objects}}{{.}}
+{{end}}</pre>
+        {{/* Redaction is the remedy when a secret reaches memory: it removes one
+             version's content permanently while the rest of the history stays
+             intact. Linked from here because this is where an operator is
+             already looking at what the bucket holds. */}}
+        <p class="fs-sm" style="margin-top:8px">
+          <a href="/redact?project={{.Project}}">Redact a leaked version →</a>
+        </p>
+      {{else}}
+        <p class="fs-sm subtle">No memory stored yet.</p>
+      {{end}}
+    </div>
+
+    <div>
+      <div class="lbl" style="margin-bottom:6px">
+        Cache <code>{{.Project}}.bbolt</code>
+        <span class="badge" style="margin-left:6px">{{len .CacheEntries}} cached</span>
+      </div>
+      {{if .CacheEntries}}
+        <div class="table-wrap" style="max-height:280px;overflow:auto">
+          <table>
+            <thead><tr><th>Path</th><th class="num">Size</th><th></th></tr></thead>
+            <tbody>
+            {{range .CacheEntries}}
+              <tr>
+                <td class="mono fs-sm">{{.Path}}</td>
+                <td class="num">{{bytes64 .Bytes}}</td>
+                <td>{{if .Queued}}<span class="badge warn" title="Not yet in the bucket">unsynced</span>{{end}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{else}}
+        <p class="fs-sm subtle">Nothing cached on this host.</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{if .AgentDir}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Agents in this repository</h2>
+      <p class="hint">Found in <code>{{.AgentDir}}</code>.</p>
+    </div>
+    {{if .MCPConfigured}}
+      <span class="badge ok"><span class="dot"></span>repo wired to Silo</span>
+    {{else}}
+      <span class="badge warn"><span class="dot"></span>no .mcp.json</span>
+    {{end}}
+  </div>
+
+  {{if not .MCPConfigured}}
+  <div class="card-body" style="border-bottom:1px solid var(--line)">
+    <div class="notice warn" style="margin:0">
+      <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+      <div class="n-body">
+        <strong>None of these agents can reach Silo.</strong>
+        <p>Wiring is per repository, not per agent: one <code>.mcp.json</code> gives
+          every agent here the silo tools.</p>
+        <p style="margin-top:8px">
+          <a class="btn btn-sm btn-primary" href="/onboard/connect?project={{.Project}}">Write .mcp.json</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Agent</th><th>Model</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+        {{range .Agents}}
+          <tr>
+            <td><code class="id">{{.Name}}</code></td>
+            <td class="fs-sm">{{if .Model}}<span class="badge">{{.Model}}</span>{{else}}<span class="subtle">—</span>{{end}}</td>
+            <td class="fs-sm muted">{{.Description}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-foot">
+    <span class="fs-sm muted">
+      {{len .Agents}} agent(s). All share this project's memory — Silo isolates per
+      project, not per agent, so agents in one repo see each other's context.
+    </span>
+  </div>
+</div>
+{{else if .AgentErr}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">Could not scan for agents: {{.AgentErr}}</div>
+</div>
+{{end}}
+
+{{if .Config}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Agent config</h2>
+      <p class="hint">Drop this into a repo as <code>.mcp.json</code>.</p>
+    </div>
+    <a class="btn btn-sm" href="/onboard/connect?project={{.Project}}">Write it to a repo</a>
+  </div>
+  <div class="card-body">
+    <pre class="snippet" style="user-select:all">{{.Config}}</pre>
+  </div>
+</div>
+{{end}}
+{{end}}

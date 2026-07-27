@@ -1,0 +1,121 @@
+{{define "body"}}
+{{if .DaemonErr}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">
+    <strong>Cache sizes and actions are unavailable.</strong>
+    <p>{{.DaemonErr}}</p>
+    <p>Policy below is still accurate — it comes from the registry, not the daemon.</p>
+  </div>
+</div>
+{{end}}
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Projects</div>
+    <div class="stat-value">{{len .Rows}}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Cached entries</div>
+    <div class="stat-value">{{.TotalEntries}}</div>
+    <div class="stat-note">across every project</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Reclaimable</div>
+    <div class="stat-value {{if gt .TotalReclaimable 0}}warn{{end}}">{{bytes .TotalReclaimable}}</div>
+    <div class="stat-note">freed by eviction, still on disk</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Unsynced writes</div>
+    <div class="stat-value {{if gt .TotalPending 0}}warn{{else}}ok{{end}}">{{.TotalPending}}</div>
+    <div class="stat-note">{{if gt .TotalPending 0}}exist only on local disk{{else}}everything is durable{{end}}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Local cache by project</h2>
+      <p class="hint">Eviction frees pages for reuse but never shrinks the file; only compaction returns the disk.</p>
+    </div>
+  </div>
+
+  {{if .Rows}}
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th class="num">Entries</th>
+            <th class="num">Content</th>
+            <th class="num">On disk</th>
+            <th class="num">Reclaimable</th>
+            <th class="num">Unsynced</th>
+            <th>Policy in force</th>
+            {{if .CanAct}}<th></th>{{end}}
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Rows}}
+          <tr>
+            <td><code class="id">{{.Project}}</code></td>
+            {{if .StatsKnown}}
+              <td class="num">{{.Stat.Entries}}</td>
+              <td class="num">{{bytes .Stat.Bytes}}</td>
+              <td class="num">{{bytes .Stat.FileBytes}}</td>
+              <td class="num">
+                {{if gt .Stat.Reclaimable 0}}
+                  {{bytes .Stat.Reclaimable}}
+                  <span class="subtle">({{pctOf .Stat.Reclaimable .Stat.FileBytes}})</span>
+                {{else}}<span class="subtle">—</span>{{end}}
+              </td>
+              <td class="num">
+                {{if gt .Stat.Pending 0}}
+                  <span class="unsynced" title="These writes exist only on the daemon's disk">{{.Stat.Pending}}</span>
+                {{else}}0{{end}}
+              </td>
+            {{else}}
+              {{/* "nothing cached" and "nobody checked" must not look the same */}}
+              <td colspan="5" class="unknown">
+                unknown{{if .Stat.StatsError}} — {{.Stat.StatsError}}{{end}}
+              </td>
+            {{end}}
+            <td>
+              {{range .Policy}}
+                <div class="fs-sm">{{.Label}}: <span class="mono">{{.Value}}</span><span class="src {{.Source}}">{{.Source}}</span></div>
+              {{end}}
+            </td>
+            {{if $.CanAct}}
+            <td class="actions">
+              <form class="inline" method="post" action="/cache-action">
+                <input type="hidden" name="project" value="{{.Project}}">
+                <input type="hidden" name="action" value="compact">
+                <button class="btn btn-sm btn-ghost" type="submit">Compact</button>
+              </form>
+              <form class="inline" method="post" action="/cache-action"
+                    {{/* No apostrophes in this message: an unescaped one would close the
+                         JS string early and silently break the confirmation, turning a
+                         guarded action into a one-click purge. */}}
+                    onsubmit="return confirm('Purge the local cache for {{.Project}}?\n\nCached content is re-fetched from the backend on the next read. Queued writes are never purged: the daemon refuses while any are pending.')">
+                <input type="hidden" name="project" value="{{.Project}}">
+                <input type="hidden" name="action" value="purge">
+                <button class="btn btn-sm btn-ghost" type="submit">Purge</button>
+              </form>
+            </td>
+            {{end}}
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    <div class="empty-title">No projects registered</div>
+    <p>Onboard one to start storing agent memory.</p>
+    <a class="btn btn-primary" href="/onboard/name">{{template "ico-plus" .}} Onboard project</a>
+  </div>
+  {{end}}
+</div>
+{{end}}

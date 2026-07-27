@@ -1,8 +1,10 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/tooltropolis/silo/internal/registry"
 )
@@ -20,6 +22,13 @@ type projectRow struct {
 	// NextStep tells an operator which teardown command to run when a project
 	// is stuck mid-decommission (spec §7.1). The dashboard never runs it.
 	NextStep string
+	// Unsynced counts writes still buffered on the daemon's disk. Rendered as
+	// "?" when no QueueReader is configured, because "nothing pending" and
+	// "nobody checked" must never look the same.
+	Unsynced string
+	// UnsyncedClass emphasises a non-zero count. Data at risk is a warning, not
+	// a statistic, and deciding that here keeps the template readable.
+	UnsyncedClass string
 }
 
 // handleRegistry is the dashboard home page: a read-only table of every project.
@@ -39,17 +48,44 @@ func (s *Server) handleRegistry(w http.ResponseWriter, r *http.Request) {
 
 	rows := make([]projectRow, 0, len(records))
 	for _, rec := range records {
+		unsynced := s.unsyncedFor(r.Context(), rec.ProjectID)
 		rows = append(rows, projectRow{
-			ProjectID:    rec.ProjectID,
-			Status:       rec.Status,
-			BucketName:   rec.BucketName,
-			CredentialID: rec.CredentialID,
-			KeyID:        rec.KeyID,
-			CreatedAt:    rec.CreatedAt,
-			NextStep:     teardownHint(rec.Status),
+			Unsynced:      unsynced,
+			UnsyncedClass: unsyncedClass(unsynced),
+			ProjectID:     rec.ProjectID,
+			Status:        rec.Status,
+			BucketName:    rec.BucketName,
+			CredentialID:  rec.CredentialID,
+			KeyID:         rec.KeyID,
+			CreatedAt:     rec.CreatedAt,
+			NextStep:      teardownHint(rec.Status),
 		})
 	}
 	s.render(w, "registry.html", map[string]any{"Projects": rows, "Active": "registry"})
+}
+
+// unsyncedFor reports a project's locally-buffered write count for display.
+//
+// Returns "?" when no QueueReader is wired or the lookup fails — a project that
+// might be holding unsynced data must not render as a confident "0".
+func (s *Server) unsyncedFor(ctx context.Context, projectID string) string {
+	if s.queues == nil {
+		return "?"
+	}
+	depth, err := s.queues.QueueDepth(ctx, projectID)
+	if err != nil {
+		return "?"
+	}
+	return strconv.Itoa(depth)
+}
+
+// unsyncedClass emphasises a project holding data that never reached the
+// backend. "0" and "?" are unremarkable; anything else is a warning.
+func unsyncedClass(unsynced string) string {
+	if unsynced == "0" || unsynced == "?" {
+		return "meta"
+	}
+	return "unsynced"
 }
 
 // teardownHint derives which manual teardown step to run next from a project's

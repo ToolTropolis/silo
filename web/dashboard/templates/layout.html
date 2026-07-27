@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Silo — {{.Title}}</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #fbfbfa; --fg: #1a1a19; --muted: #6b6b68; --line: #e3e3e0;
@@ -59,6 +61,9 @@
              border:1px solid var(--line); border-radius:6px; text-decoration:none; }
   .chips a.on { border-color:var(--accent); }
   .meta { color:var(--muted); font-size:12.5px; }
+  /* A non-zero unsynced count means memory exists only on the daemon's disk.
+     That is a warning, not a statistic, so it should catch the eye. */
+  .unsynced { color:var(--warn); font-weight:600; font-size:12.5px; }
 </style>
 </head>
 <body>

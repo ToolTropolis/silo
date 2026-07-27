@@ -23,11 +23,26 @@ type Client interface {
 	// Read returns the current markdown content at path within the
 	// caller's project scope.
 	Read(ctx context.Context, path string) ([]byte, error)
+	// ReadWithHash also returns the content hash, which WriteIfMatch takes as a
+	// precondition. Separate from Read so the common case keeps its two-value
+	// signature.
+	ReadWithHash(ctx context.Context, path string) ([]byte, string, error)
 
 	// Write persists new markdown content at path. Internally goes
 	// through the daemon's SafeWrite (CAS + versioning) — the caller
 	// never needs to think about conflicts or retries.
 	Write(ctx context.Context, path string, content []byte) error
+	// WriteAs records who wrote it, so an operator can attribute a memory to
+	// the agent that produced it. An empty actor behaves exactly like Write.
+	WriteAs(ctx context.Context, path string, content []byte, actor string) error
+	// WriteIfMatch applies the write only if the stored content still hashes to
+	// expectedHash, returning ErrConflict otherwise. This is how two agents
+	// editing the same memory avoid silently overwriting each other: read, edit,
+	// then write back with the hash the read returned.
+	//
+	// An empty expectedHash is exactly WriteAs. Use HashOfAbsent to require that
+	// nothing exists at the path yet.
+	WriteIfMatch(ctx context.Context, path string, content []byte, actor, expectedHash string) error
 
 	// List returns memory paths under a prefix (mirrors browsing a
 	// directory of .md files).
@@ -50,3 +65,35 @@ var ErrNotFound = errors.New("client: not found")
 // ErrUnauthorized is returned when the token is missing, unknown, or not scoped
 // to the requested project.
 var ErrUnauthorized = errors.New("client: unauthorized")
+
+// ErrConflict is returned by WriteIfMatch when the stored content no longer
+// matches the hash the caller expected.
+//
+// Someone else wrote in between. Retrying the same content would clobber their
+// change, so the caller has to re-read and reapply its edit — which is exactly
+// what the hash exists to make visible.
+var ErrConflict = errors.New("client: content changed since it was read")
+
+// HashOfAbsent is the content hash of a path that does not exist, so
+// WriteIfMatch can express "create this only if nothing is there yet".
+//
+// It is the SHA-256 of no bytes, which is what the daemon computes for absent
+// content — not a sentinel the daemon special-cases.
+const HashOfAbsent = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// ErrTooLarge is returned by Write when the content exceeds the project's
+// per-entry size cap.
+//
+// Distinct from a transport failure: the write was understood and refused, so
+// retrying the same content will never succeed. Split the content into smaller
+// files instead.
+var ErrTooLarge = errors.New("client: entry exceeds the size limit")
+
+// ErrReadOnly is returned by Write when the token authenticates but grants only
+// read access.
+//
+// Distinct from ErrUnauthorized on purpose: the credential is valid, so a caller
+// that retries or re-authenticates is wasting its time. This is the error that
+// tells an agent the memory it is holding is reference material it may not
+// change.
+var ErrReadOnly = errors.New("client: token is read-only")

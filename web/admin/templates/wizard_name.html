@@ -1,0 +1,158 @@
+{{define "body"}}
+<div class="wizard">
+  {{template "rail" .}}
+
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Which repository?</h2>
+          <p class="hint">Silo derives the project name from it. A local path also lets the wizard write <code>.mcp.json</code> for you later.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <form method="get" action="/onboard/name">
+          <div class="field">
+            <label class="lbl" for="repo">Repository path or URL</label>
+            <div style="display:flex; gap:8px">
+              <input type="text" id="repo" name="repo" value="{{.RepoInput}}"
+                     placeholder="/Users/you/code/myrepo   or   https://github.com/org/repo.git"
+                     autocomplete="off" spellcheck="false" autofocus>
+              <button class="btn" type="submit">Look up</button>
+              {{/* Progressively enhanced: without JS this is a plain link to the
+                   server-side browser, which always works. With JS it opens the
+                   real OS folder dialog instead. */}}
+              <a class="btn btn-ghost" id="browse-link" href="/browse"
+                 title="Browse directories on this machine">Browse…</a>
+            </div>
+            {{with .Repo}}
+              {{if .Problem}}<p class="err">{{.Problem}}</p>{{end}}
+            {{end}}
+            {{if not .Repo}}
+            <p class="help">
+              An absolute path on this machine, or any git clone URL. Use <strong>Browse…</strong>
+              to find it by clicking, or skip this and name the project directly below.
+            </p>
+            {{end}}
+          </div>
+        </form>
+
+        {{with .Repo}}
+          {{if .Derived}}
+          <div class="notice {{if .Normalized}}warn{{else}}ok{{end}}">
+            <span class="n-ico">{{if .Normalized}}{{template "ico-warn-tri" $}}{{else}}{{template "ico-check-circle" $}}{{end}}</span>
+            <div class="n-body">
+              {{if .Normalized}}
+                <strong>Adjusted <code>{{.RawName}}</code> to <code>{{.SuggestedID}}</code>.</strong>
+                <p>Project IDs must work as both an S3 bucket name and a filename, so they
+                  allow only lowercase letters, digits, and hyphens. Edit it below if you
+                  would rather use something else.</p>
+              {{else}}
+                <strong>Found <code>{{.RawName}}</code>.</strong>
+              {{end}}
+              {{if .RemoteURL}}<p class="mono fs-sm">{{.RemoteURL}}</p>{{end}}
+              {{if and .LocalPath (not .IsGitRepo)}}
+                <p>This directory has no <code>.git</code> — allowed, but check the path is
+                  what you meant.</p>
+              {{end}}
+            </div>
+          </div>
+          {{end}}
+        {{end}}
+      </div>
+    </div>
+
+    <form method="get" action="/onboard/checks">
+      {{/* Carried forward so the Connect step can prefill the repo path and
+           offer to write .mcp.json without asking for it twice. */}}
+      <input type="hidden" name="repo" value="{{.RepoInput}}">
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Project ID</h2>
+            <p class="hint">Becomes the bucket name and the local cache filename. It cannot be changed later.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label class="lbl" for="project">
+              Project ID
+              {{if .Autofilled}}<span class="badge accent" style="margin-left:6px">derived from your repo</span>{{end}}
+            </label>
+            <input class="input-lg{{if .IDError}} is-error{{end}}" type="text" id="project" name="project"
+                   value="{{.Project}}" placeholder="my-service" autocomplete="off"
+                   spellcheck="false" required {{if not .RepoInput}}autofocus{{end}}>
+            {{if .IDError}}
+              <p class="err">{{.IDError}}</p>
+            {{else}}
+              <p class="help">3–56 characters. Lowercase letters, digits, and hyphens only —
+                the intersection of what S3 bucket names and filenames both accept.</p>
+            {{end}}
+          </div>
+
+          {{if .Bucket}}
+          <dl class="summary">
+            <dt>Storage bucket</dt>
+            <dd>{{.Bucket}}</dd>
+            <dt>Local cache file</dt>
+            <dd>{{.CacheFile}}</dd>
+          </dl>
+          {{end}}
+
+          <div class="notice" style="margin-top:16px">
+            <span class="n-ico subtle">{{template "ico-alert" .}}</span>
+            <div class="n-body">
+              <strong>Choose carefully.</strong>
+              <p>Uppercase is rejected rather than folded: silently lowercasing would let two
+                distinct IDs share one bucket while keeping separate caches — memory appearing
+                in the wrong project.</p>
+            </div>
+          </div>
+        </div>
+        <div class="card-foot">
+          <a class="btn btn-ghost" href="/projects">Cancel</a>
+          <button class="btn btn-primary" type="submit">
+            Run checks {{template "ico-arrow-right" .}}
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{{/* The native folder dialog hands a page the folder's NAME but never its
+     path — MDN: "the absolute path of the chosen directory is never exposed
+     to the page". So the picker supplies the name and the server resolves it
+     to a real path. Everything below is an enhancement: with scripting off,
+     the Browse… link still reaches the server-side browser. */}}
+<input type="file" id="native-dir" webkitdirectory hidden>
+<form method="get" action="/lookup" id="lookup-form" hidden>
+  <input type="hidden" name="name" id="lookup-name">
+</form>
+<script>
+(function () {
+  var input = document.getElementById("native-dir");
+  var link  = document.getElementById("browse-link");
+  if (!input || !link) return;
+  // Only take over the link when the browser actually supports directory
+  // selection; otherwise leave it pointing at the server-side browser.
+  if (!("webkitdirectory" in input)) return;
+
+  link.addEventListener("click", function (e) {
+    e.preventDefault();
+    input.click();
+  });
+  link.title = "Pick a folder with your system dialog";
+
+  input.addEventListener("change", function () {
+    var files = input.files;
+    if (!files || !files.length) return;           // dialog cancelled
+    var leaf = (files[0].webkitRelativePath || "").split("/")[0];
+    if (!leaf) return;
+    document.getElementById("lookup-name").value = leaf;
+    document.getElementById("lookup-form").submit();
+  });
+})();
+</script>
+
+{{end}}

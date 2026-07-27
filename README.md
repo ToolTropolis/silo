@@ -1,4 +1,4 @@
-# Silo
+<img src="docs/brand/logo-wordmark.svg" alt="Silo" height="56">
 
 **Silo** is a pluggable Go connector that gives any repo's agent fleet
 **persistent, versioned, multi-tenant memory** with an out-of-band consolidation
@@ -13,11 +13,11 @@ The two names tell one story:
   Silo. It reads a project's own sessions and its own memory store and refines
   them, never touching another project's data because it never has access to it.
 
-> **Status: v1 in progress.** This repository is scaffolded to its target
-> architecture — every package and interface from the spec is in place, with the
-> implementation being filled in per the build sequence in
-> [`docs/architecture.md`](docs/architecture.md). Package bodies currently return
-> a not-implemented sentinel; the module builds, vets, and tests green.
+> **Status: v1 complete.** All seven build-sequence steps are implemented and
+> verified against a live stack, and the v1 definition-of-done checklist
+> (spec §10) passes 14/14 — including leader-failover, a real backend outage
+> with no data loss, and a proven cross-project isolation boundary. See
+> [`docs/architecture.md`](docs/architecture.md).
 
 ## Architecture at a glance
 
@@ -45,7 +45,8 @@ Three zones (full diagram and narrative in
 ## Repository layout
 
 ```
-cmd/          silod (daemon), siloctl (admin CLI), silo-distil (Distilator runner)
+cmd/          silod (daemon), siloctl (admin CLI), silo-distil, silo-dashboard,
+              silo-admin (operator console), silo-mcp (MCP server for agents)
 internal/     cache, backend, registry, kms, daemon, transcript, distilator, admin
 pkg/client/   agent-facing SDK (Read/Write/List/Search) + framework adapters
 web/dashboard v1 read/review web surface
@@ -53,6 +54,21 @@ configs/      example.yaml (dev-only defaults)
 deploy/       docker-compose.yaml (SeaweedFS + 3-node rqlite + Vault) + migrations
 docs/         architecture.md
 ```
+
+## Quickstart
+
+```bash
+git clone https://github.com/ToolTropolis/silo.git && cd silo
+deploy/demo.sh
+```
+
+Starts the stack, creates an isolated project, runs the daemon, and writes and
+reads back a memory file — printing every command as it goes. See
+[**docs/QUICKSTART.md**](docs/QUICKSTART.md) for the same thing by hand.
+
+Already have a Silo deployment and just need the client binaries?
+[**docs/installing.md**](docs/installing.md) covers the installer, `go install`,
+and building from source.
 
 ## Requirements
 
@@ -65,7 +81,8 @@ docs/         architecture.md
 # 1. Stand up local dependencies: SeaweedFS, a 3-node rqlite cluster, Vault (dev).
 docker compose -f deploy/docker-compose.yaml up -d
 
-# 2. Provision the silo-admin S3 identity the backend authenticates as.
+# 2. Initialize/unseal Vault and provision the silo-admin S3 identity.
+#    Idempotent — re-run after every `up` (Vault seals on restart).
 deploy/bootstrap-dev.sh
 
 # 3. Build everything.
@@ -79,14 +96,40 @@ The local defaults in [`configs/example.yaml`](configs/example.yaml) point at
 the compose services. **These are dev-only values** — production config comes
 from environment variables or a secrets manager, never a checked-in file.
 
+> **Data persists.** Every service writes to a named Docker volume, so the
+> registry, memory objects, and per-project encryption keys survive
+> `docker compose down` and container restarts. To wipe the stack and start
+> clean, use `docker compose -f deploy/docker-compose.yaml down -v`.
+>
+> Vault runs in **server mode with file storage**, not `-dev`. Dev mode keeps
+> everything in memory, so a plain `docker restart` silently destroyed every
+> per-project SSE key while the registry still referenced it. The tradeoff is
+> that Vault seals on restart — `deploy/bootstrap-dev.sh` unseals it and is
+> safe to re-run.
+
 > **Isolation note.** Silo's guarantee is per-project isolation: onboarding
 > issues each project a SeaweedFS identity scoped Read/Write to *only* its own
 > bucket, so one project's credential is denied (403) on another's bucket. A
 > consequence is that **once any identity exists, SeaweedFS disables anonymous
-> access cluster-wide** — so Silo's own components authenticate as the
-> `silo-admin` identity (`deploy/bootstrap-dev.sh`). The isolation guarantee is
+> access cluster-wide** — so Silo's own components authenticate. Two identities
+> are provisioned, least privilege: **`silo-admin`** (bucket lifecycle, used
+> *only* by `siloctl onboard`/`teardown`) and **`silo-runtime`** (object CRUD
+> only, used by `silod`/`silo-dashboard`/`silo-distil`). SeaweedFS denies
+> `silo-runtime` bucket creation and deletion, so a compromised daemon or
+> dashboard cannot destroy a project's bucket. The isolation guarantee is
 > covered by an integration test that drives one project's credential against
 > another's bucket and asserts it's refused.
+
+## Onboarding your own repo
+
+To give one of your repositories its own isolated memory silo — provisioning,
+running the daemon, and reading/writing its memory — follow
+[`docs/onboarding-a-repo.md`](docs/onboarding-a-repo.md).
+
+Agents reach Silo over the **Model Context Protocol**: `silo-mcp` exposes one
+project's memory as four tools (`silo_read`, `silo_write`, `silo_list`,
+`silo_search`), so any MCP-speaking runtime picks them up from a `.mcp.json`
+entry — no file sync and no framework-specific hooks. The guide has the config.
 
 ## Exercising the full cycle by hand
 
@@ -100,10 +143,7 @@ export SILO_S3_ACCESS_KEY=SILOADMIN SILO_S3_SECRET_KEY=SILOADMINSECRET
 
 # 1. Provision an isolated project: bucket + per-project SSE key + registry
 #    record + a credential scoped Read/Write to that bucket only.
-#    --weed-binary is needed because credential issuance shells out to `weed`,
-#    which lives in the SeaweedFS container rather than on the host.
-siloctl onboard --project=proj-11 --vault-token=dev-only-token \
-  --weed-binary=./deploy/weed-docker.sh
+siloctl onboard --project=proj-11 --vault-token=dev-only-token
 
 # 2. Agents read/write memory through the SDK against a running daemon.
 silod --listen 127.0.0.1:8500 --tokens "agent-token=proj-11"
@@ -161,6 +201,30 @@ status` shows which credential source is active.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full build sequence
 and the v1 acceptance checklist.
+
+## Verifying a release
+
+Release assets ship with a SHA-256 manifest (`SHA256SUMS.txt`) signed by
+[cosign](https://docs.sigstore.dev/) keyless signing. There is no public key to
+distribute: the signature is tied to the workflow that produced it, and is
+recorded in the Rekor transparency log.
+
+```bash
+# 1. Verify the manifest signature came from this repo's release workflow.
+cosign verify-blob \
+  --signature SHA256SUMS.txt.sig \
+  --certificate SHA256SUMS.txt.pem \
+  --certificate-identity-regexp '^https://github.com/ToolTropolis/silo/\.github/workflows/release\.yaml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS.txt
+
+# 2. Verify the binaries match the (now-trusted) manifest.
+sha256sum -c SHA256SUMS.txt
+```
+
+Step 1 without step 2 proves the manifest is authentic but says nothing about
+the binary you downloaded; step 2 without step 1 proves the binary matches a
+manifest that anyone could have written. Run both.
 
 ## Contributing
 

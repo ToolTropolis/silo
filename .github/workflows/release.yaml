@@ -1,10 +1,14 @@
 name: Release
 
-# Builds the three binaries for a tagged release and publishes them with a
-# SHA-256 checksums manifest so consumers can verify what they downloaded
-# (OSPS-BR-06.01 — released assets have a hashed manifest). Signing the manifest
-# with a keyless signer (e.g. cosign/sigstore) is the follow-up to fully satisfy
-# signed releases; wire it in before the first published tag.
+# Builds the release binaries, publishes a SHA-256 checksums manifest, and signs
+# that manifest with cosign keyless signing (OSPS-BR-06.01 — released assets
+# have a signed, hashed manifest).
+#
+# Keyless signing means there is no private key to store or rotate: cosign uses
+# the workflow's OIDC token to obtain a short-lived certificate from Fulcio and
+# records the signature in the Rekor transparency log. Verification therefore
+# checks *which workflow in which repo* produced the release, not merely that
+# someone held a key.
 
 on:
   push:
@@ -12,13 +16,15 @@ on:
       - 'v*'
 
 permissions:
-  contents: write   # needed to create the GitHub Release and upload assets
+  contents: write   # create the GitHub Release and upload assets
+  id-token: write   # REQUIRED: mints the OIDC token cosign exchanges with Fulcio
 
 jobs:
   build-release:
-    name: build binaries + checksums
+    name: build, checksum, sign
     runs-on: ubuntu-latest
     steps:
+      # Actions pinned by commit SHA for supply-chain integrity (OSPS-BR-05.01).
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -27,11 +33,14 @@ jobs:
         with:
           go-version: '1.26'
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: Build binaries
         run: |
           mkdir -p dist
           version="${GITHUB_REF_NAME}"
-          for cmd in silod siloctl silo-distil; do
+          for cmd in silod siloctl silo-distil silo-dashboard silo-mcp silo-admin; do
             for os in linux darwin; do
               for arch in amd64 arm64; do
                 out="dist/${cmd}_${version}_${os}_${arch}"
@@ -42,10 +51,42 @@ jobs:
           done
 
       - name: Generate checksums manifest
+        working-directory: dist
         run: |
-          cd dist
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      # Sign the manifest rather than each binary: the manifest already commits
+      # to every artifact's hash, so one signature covers the whole release and
+      # verification stays a two-step check (verify the bundle, then sha256sum -c).
+      #
+      # Bundle format only. cosign v3 emits a Sigstore bundle by default and
+      # REFUSES --new-bundle-format=false, so detached .sig/.pem can no longer
+      # be produced at all — an earlier attempt to publish both failed here.
+      # The bundle carries the certificate and Rekor inclusion proof in one
+      # file, so it is strictly more self-contained than what it replaces.
+      - name: Sign the checksums manifest
+        working-directory: dist
+        run: |
+          cosign sign-blob --yes \
+            --bundle SHA256SUMS.txt.bundle \
+            SHA256SUMS.txt
+
+          ls -la SHA256SUMS.txt*
+
+      - name: Verify the signature before publishing
+        working-directory: dist
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          # Fail the release rather than publish an unverifiable signature.
+          # The identity must be this repo's release workflow at a tag — not
+          # merely a valid Sigstore certificate, which any Actions run can mint.
+          cosign verify-blob \
+            --bundle SHA256SUMS.txt.bundle \
+            --certificate-identity-regexp "^https://github.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            SHA256SUMS.txt
 
       - name: Publish release assets
         env:

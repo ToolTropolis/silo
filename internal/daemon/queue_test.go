@@ -19,6 +19,15 @@ type mapBackend struct {
 	objs  map[string][]byte
 	etags map[string]int
 	down  bool
+	gets  int // counts Get calls, so tests can assert "no backend traffic"
+}
+
+// getCalls reports how many Gets have been made, for asserting that an idle
+// sync pass costs no network traffic.
+func (m *mapBackend) getCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.gets
 }
 
 func newMapBackend() *mapBackend {
@@ -38,6 +47,7 @@ func (m *mapBackend) key(projectID, path string) string { return projectID + "/"
 func (m *mapBackend) Get(_ context.Context, projectID, path, _ string) ([]byte, backend.ObjectVersion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.gets++
 	if m.down {
 		return nil, backend.ObjectVersion{}, errBackendDown
 	}
@@ -101,7 +111,7 @@ func newSyncDaemon(t *testing.T, b backend.DurableBackend) (*Daemon, cache.Local
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(b, c, nil, nil), c
+	return New(b, c, newGenRegistry(), nil), c
 }
 
 // TestSyncProject_DrainsQueuedWritesAfterRecovery is the NAV-72 acceptance
@@ -118,7 +128,7 @@ func TestSyncProject_DrainsQueuedWritesAfterRecovery(t *testing.T) {
 	writes := map[string]string{"a.md": "AAA", "b.md": "BBB", "c.md": "CCC"}
 	for path, content := range writes {
 		c := content
-		if err := d.SafeWrite(ctx, proj, path, func([]byte) []byte { return []byte(c) }, "agent", "s1"); err != nil {
+		if _, err := d.SafeWrite(ctx, proj, path, func([]byte) []byte { return []byte(c) }, "agent", "s1"); err != nil {
 			t.Fatalf("SafeWrite while down should queue, got: %v", err)
 		}
 	}
@@ -170,7 +180,7 @@ func TestSyncProject_ReEnqueuesOnReplayFailure(t *testing.T) {
 	// Queue two writes while down.
 	be.setDown(true)
 	for _, p := range []string{"x.md", "y.md"} {
-		if err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte("v") }, "a", "s"); err != nil {
+		if _, err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte("v") }, "a", "s"); err != nil {
 			t.Fatalf("enqueue %s: %v", p, err)
 		}
 	}
@@ -201,4 +211,74 @@ type putFailBackend struct {
 
 func (p *putFailBackend) Put(context.Context, string, string, []byte, backend.PutOptions) (backend.ObjectVersion, error) {
 	return backend.ObjectVersion{}, errors.New("put rejected")
+}
+
+// failAfterNPuts goes down permanently once it has accepted n Puts, modelling a
+// backend that dies partway through a drain.
+type failAfterNPuts struct {
+	*mapBackend
+	mu        sync.Mutex
+	remaining int
+}
+
+func (f *failAfterNPuts) Put(ctx context.Context, projectID, path string, content []byte, opts backend.PutOptions) (backend.ObjectVersion, error) {
+	f.mu.Lock()
+	if f.remaining <= 0 {
+		f.mu.Unlock()
+		f.mapBackend.setDown(true)
+		return backend.ObjectVersion{}, errBackendDown
+	}
+	f.remaining--
+	f.mu.Unlock()
+	return f.mapBackend.Put(ctx, projectID, path, content, opts)
+}
+
+// TestSyncProject_DoesNotDoubleEnqueueOnMidDrainOutage guards the most likely
+// way to corrupt the queue while wiring the sync worker.
+//
+// SyncProject replays through SafeWrite, and SafeWrite ALSO enqueues when it
+// finds the backend unreachable. So a backend that dies mid-drain can have the
+// same write buffered twice: once by SafeWrite's own fallback and once by
+// SyncProject re-enqueueing the remainder. The queue must end up holding each
+// unsynced write exactly once.
+func TestSyncProject_DoesNotDoubleEnqueueOnMidDrainOutage(t *testing.T) {
+	ctx := context.Background()
+	inner := newMapBackend()
+	be := &failAfterNPuts{mapBackend: inner, remaining: 1} // 1st replay lands, then it dies
+	d, c := newSyncDaemon(t, be)
+	const proj = "proj-11"
+
+	// Queue three writes while the backend is down.
+	inner.setDown(true)
+	for _, p := range []string{"memory/a.md", "memory/b.md", "memory/c.md"} {
+		if _, err := d.SafeWrite(ctx, proj, p, func([]byte) []byte { return []byte(p) }, "agent", "s1"); err != nil {
+			t.Fatalf("queueing write %s: %v", p, err)
+		}
+	}
+	if depth, _ := c.QueueDepth(ctx, proj); depth != 3 {
+		t.Fatalf("setup: queue depth = %d, want 3", depth)
+	}
+
+	// Backend "recovers" enough to start the drain, then dies after one Put.
+	inner.setDown(false)
+	if err := d.SyncProject(ctx, proj); err == nil {
+		t.Fatal("a mid-drain outage should surface as an error")
+	}
+
+	// One write landed; two remain. Not three (the failed one counted twice),
+	// and not four (SafeWrite's fallback plus SyncProject's re-enqueue).
+	depth, err := c.QueueDepth(ctx, proj)
+	if err != nil {
+		t.Fatalf("QueueDepth: %v", err)
+	}
+	if depth != 2 {
+		t.Errorf("queue depth after mid-drain outage = %d, want 2 "+
+			"(each unsynced write buffered exactly once)", depth)
+	}
+}
+
+// DeleteVersion is unsupported: this fake keeps no version history, so a
+// redaction test must use versionedBackend instead of silently passing here.
+func (m *mapBackend) DeleteVersion(context.Context, string, string, string) error {
+	return errors.New("mapBackend does not keep version history")
 }

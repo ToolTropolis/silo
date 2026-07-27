@@ -21,13 +21,38 @@ func (d *Daemon) Read(ctx context.Context, projectID, path string) ([]byte, erro
 	content, _, err := d.backend.Get(ctx, projectID, path, "")
 	switch {
 	case err == nil:
-		_ = d.cache.Put(ctx, projectID, path, content) // keep the cache warm
+		// Same reasoning as the write path: only warm a file whose ownership is
+		// established, or the entry is discarded by a later bind anyway.
+		if bindErr := d.bindCache(ctx, projectID); bindErr == nil {
+			_ = d.cache.Put(ctx, projectID, path, content) // keep the cache warm
+		}
 		return content, nil
 	case errors.Is(err, backend.ErrNotFound):
+		// The backend is the source of truth, so a 404 is a positive statement
+		// that this path does not exist. A cached entry for it is known-wrong
+		// and must not survive to be served by the fallback below during a
+		// later outage. Best-effort, like the cache-warm above.
+		//
+		// Safe because the adapter classifies not-found strictly (a typed
+		// NoSuchKey or an actual 404, never a 5xx or a reset), so an unreachable
+		// backend can't reach this branch and drop good entries.
+		_ = d.cache.Delete(ctx, projectID, path)
 		return nil, ErrNotFound
 	}
 
-	// Backend unreachable — fall back to the local cache.
+	// Backend unreachable — fall back to the local cache, but only once we know
+	// which incarnation of this project owns it.
+	//
+	// This is the one branch that can serve bytes the backend never confirmed,
+	// so it is also the branch where a previous tenant's cached memory could
+	// reach a re-onboarded project. If ownership can't be established, return
+	// the backend error rather than guessing: "backend down AND registry down"
+	// is already a degraded cluster, and availability there is not worth
+	// risking a cross-tenant read.
+	if bindErr := d.bindCache(ctx, projectID); bindErr != nil {
+		return nil, fmt.Errorf("daemon: read %q: backend unreachable (%v) and %w", path, err, bindErr)
+	}
+
 	cached, cacheErr := d.cache.Get(ctx, projectID, path)
 	if cacheErr == nil {
 		return cached, nil

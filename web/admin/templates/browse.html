@@ -1,0 +1,90 @@
+{{define "body"}}
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Find a repository</h2>
+      <p class="hint">Click into a folder to browse. Repositories are marked.</p>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="/onboard/name">Type a path instead</a>
+  </div>
+
+  <div class="card-body" style="border-bottom:1px solid var(--line); padding-top:13px; padding-bottom:13px">
+    {{/* Breadcrumbs, so the operator can jump back up rather than clicking
+         "up" repeatedly. */}}
+    <div class="fs-sm mono" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px">
+      {{range $i, $c := .Crumbs}}
+        {{if $i}}<span class="subtle">/</span>{{end}}
+        <a href="/browse?dir={{$c.Path}}">{{$c.Name}}</a>
+      {{end}}
+    </div>
+  </div>
+
+  {{if .Warning}}
+  <div class="card-body" style="border-bottom:1px solid var(--line)">
+    <div class="notice warn" style="margin:0">
+      <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+      <div class="n-body">{{.Warning}}</div>
+    </div>
+  </div>
+  {{end}}
+
+  {{if .IsRepo}}
+  <div class="card-body" style="border-bottom:1px solid var(--line)">
+    <div class="notice ok" style="margin:0">
+      <span class="n-ico i-pass">{{template "ico-check-circle" .}}</span>
+      <div class="n-body">
+        <strong>This directory is a git repository.</strong>
+        <p class="mono">{{.Dir}}</p>
+      </div>
+      <a class="btn btn-primary" href="/onboard/name?repo={{.Dir}}">Use this repo</a>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="card-body tight">
+    {{if or .Parent .Entries}}
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          {{if .Parent}}
+          <tr>
+            <td><a href="/browse?dir={{.Parent}}" class="mono">../</a></td>
+            <td></td>
+            <td class="actions"></td>
+          </tr>
+          {{end}}
+          {{range .Entries}}
+          <tr>
+            <td>
+              <a href="/browse?dir={{.Path}}" class="mono">{{.Name}}/</a>
+            </td>
+            <td>
+              {{if .IsRepo}}<span class="badge ok"><span class="dot"></span>git repo</span>{{end}}
+            </td>
+            <td class="actions">
+              {{if .IsRepo}}
+              <a class="btn btn-sm btn-primary" href="/onboard/name?repo={{.Path}}">Use this</a>
+              {{else}}
+              <a class="btn btn-sm btn-ghost" href="/onboard/name?repo={{.Path}}">Use anyway</a>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="empty">
+      <div class="empty-title">Nothing to show</div>
+      <p>This folder has no visible subdirectories.</p>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="card-foot">
+    <span class="fs-sm muted">
+      Browsing is limited to your home directory. Hidden folders are not shown.
+    </span>
+  </div>
+</div>
+{{end}}

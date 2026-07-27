@@ -1,0 +1,20 @@
+-- Per-project cache generation.
+--
+-- The local bbolt cache file is named after the projectID, so a project torn
+-- down and later re-onboarded under the same ID inherits the previous tenant's
+-- cache file — and the read path's outage fallback would serve those bytes to
+-- the new project. Nothing in the file recorded who owned it.
+--
+-- The generation is an opaque random value minted at onboard and stamped into
+-- the cache file. A mismatch means the file belongs to a previous tenant and
+-- its contents are discarded.
+--
+-- Deliberately not derived from the credential or key ref: teardown clears both
+-- before the record is deleted, and rotating a key must not invalidate a live
+-- cache. Deliberately not a timestamp either: those collide on a fast re-onboard
+-- and can be reproduced by a restore.
+--
+-- This is the first ALTER TABLE in the schema, which is why 003 added the
+-- migrations ledger — without it this would fail on every restart after the
+-- first.
+ALTER TABLE projects ADD COLUMN generation TEXT NOT NULL DEFAULT '';

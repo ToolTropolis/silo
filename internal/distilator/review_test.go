@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/tooltropolis/silo/internal/daemon"
 )
 
 // recordingWriter captures SafeWrite calls so tests can assert promotion went
 // through the CAS path with the right actor/session tagging.
 type recordingWriter struct {
-	calls []safeWriteCall
-	err   error
+	calls   []safeWriteCall
+	err     error
+	outcome daemon.WriteOutcome // defaults to WriteDurable
 }
 
 type safeWriteCall struct {
@@ -20,9 +23,9 @@ type safeWriteCall struct {
 	sessionID string
 }
 
-func (w *recordingWriter) SafeWrite(_ context.Context, _, path string, edit func([]byte) []byte, actor, sessionID string) error {
+func (w *recordingWriter) SafeWrite(_ context.Context, _, path string, edit func([]byte) []byte, actor, sessionID string) (daemon.WriteOutcome, error) {
 	if w.err != nil {
-		return w.err
+		return daemon.WriteDurable, w.err
 	}
 	w.calls = append(w.calls, safeWriteCall{
 		path:      path,
@@ -30,7 +33,7 @@ func (w *recordingWriter) SafeWrite(_ context.Context, _, path string, edit func
 		actor:     actor,
 		sessionID: sessionID,
 	})
-	return nil
+	return w.outcome, nil
 }
 
 // stageRun performs a run so its manifest exists, and returns the pieces needed
@@ -160,5 +163,25 @@ func TestPromote_RequiresWriter(t *testing.T) {
 	r := NewReviewer(store, nil)
 	if _, err := r.Promote(context.Background(), proj, "run-1", []string{"x"}); err == nil {
 		t.Fatal("promotion without a SafeWriter should error")
+	}
+}
+
+// TestPromote_RefusesWhenWriteOnlyQueued: a human approved this specific
+// content, so reporting it as promoted while it sits on the daemon's local disk
+// would tell a reviewer their change landed when it has not. An agent's write
+// being queued is fine; a reviewed promotion being queued is not.
+func TestPromote_RefusesWhenWriteOnlyQueued(t *testing.T) {
+	proposals := []ProposedChange{
+		{Path: "memory/conventions.md", NewContent: []byte("approved content")},
+	}
+	_, w, r := stageRun(t, proposals)
+	w.outcome = daemon.WriteQueued // backend unreachable behind the scenes
+
+	promoted, err := r.Promote(context.Background(), "proj-11", "run-1", []string{"memory/conventions.md"})
+	if err == nil {
+		t.Fatal("promoting into an unreachable backend must not report success")
+	}
+	if len(promoted) != 0 {
+		t.Errorf("promoted = %v, want none — the write never became durable", promoted)
 	}
 }

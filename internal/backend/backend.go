@@ -54,6 +54,21 @@ type DurableBackend interface {
 	// Delete removes an object (creates a delete marker; version history persists).
 	Delete(ctx context.Context, projectID, path string) error
 
+	// DeleteVersion destroys ONE version's bytes, leaving every other version of
+	// the path intact. Unlike Delete it creates no delete marker and is not
+	// reversible.
+	//
+	// This is the redaction primitive: a credential written into memory is
+	// otherwise in that version forever, and the only remedy was destroying the
+	// whole project. The destruction is real by design — a tombstone the object
+	// store still holds is not erasure — so the audit of what was removed is
+	// recorded in the registry, which the delete cannot reach.
+	//
+	// Callers must refuse to redact the current version: removing the head would
+	// silently revert the path to older content. Enforced above this layer,
+	// where the head version is known.
+	DeleteVersion(ctx context.Context, projectID, path, versionID string) error
+
 	// CreateBucket provisions a new project's bucket with versioning enabled.
 	// Called only from the onboarding path.
 	CreateBucket(ctx context.Context, projectID string) error
@@ -69,6 +84,12 @@ var ErrPreconditionFailed = errors.New("backend: precondition failed (concurrent
 
 // ErrNotFound is returned by Get when no object exists at the path.
 var ErrNotFound = errors.New("backend: object not found")
+
+// ErrNoVersionID is returned by DeleteVersion when no version was named.
+// Deleting without one is DeleteObject, which hides the entire path behind a
+// delete marker rather than removing a single version — a far worse outcome
+// than the caller asked for, so it is refused rather than guessed at.
+var ErrNoVersionID = errors.New("backend: no version ID supplied")
 
 // errNotImplemented is returned by adapter stubs whose real logic isn't built
 // yet. Kept unexported so callers only ever see it as an opaque error.

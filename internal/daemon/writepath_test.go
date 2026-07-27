@@ -92,7 +92,7 @@ func newTestDaemon(t *testing.T, b backend.DurableBackend) *Daemon {
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(b, c, nil, nil)
+	return New(b, c, newGenRegistry(), nil)
 }
 
 // TestSafeWrite_RetriesOnConflict forces a concurrent-write conflict in the
@@ -111,7 +111,7 @@ func TestSafeWrite_RetriesOnConflict(t *testing.T) {
 	}
 
 	d := newTestDaemon(t, fb)
-	err := d.SafeWrite(context.Background(), "proj-11", "notes.md",
+	_, err := d.SafeWrite(context.Background(), "proj-11", "notes.md",
 		func(cur []byte) []byte { return append(append([]byte(nil), cur...), []byte(" +mine")...) },
 		"agent-1", "s1")
 	if err != nil {
@@ -136,12 +136,25 @@ func TestSafeWrite_QueuesWhenBackendDown(t *testing.T) {
 		t.Fatalf("NewBoltCache: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	d := New(fb, c, nil, nil)
+	d := New(fb, c, newGenRegistry(), nil)
 
-	err = d.SafeWrite(context.Background(), "proj-11", "notes.md",
+	outcome, err := d.SafeWrite(context.Background(), "proj-11", "notes.md",
 		func([]byte) []byte { return []byte("queued content") }, "agent-1", "s1")
 	if err != nil {
 		t.Fatalf("SafeWrite with backend down: want nil (queued), got %v", err)
+	}
+	// The caller must be able to tell this apart from a durable write.
+	if outcome != WriteQueued {
+		t.Errorf("outcome = %v, want WriteQueued", outcome)
+	}
+
+	// An offline write must be readable offline. Without caching the content —
+	// not just the queue entry — an agent cannot read back what it just wrote.
+	got, err := d.Read(context.Background(), "proj-11", "notes.md")
+	if err != nil {
+		t.Errorf("reading back a queued write: %v", err)
+	} else if string(got) != "queued content" {
+		t.Errorf("read back %q, want %q", got, "queued content")
 	}
 
 	pending, err := c.DrainQueue(context.Background(), "proj-11")
@@ -151,4 +164,34 @@ func TestSafeWrite_QueuesWhenBackendDown(t *testing.T) {
 	if len(pending) != 1 || string(pending[0].Content) != "queued content" {
 		t.Fatalf("expected one queued write, got %+v", pending)
 	}
+}
+
+// TestSafeWrite_ReportsDurableWhenBackendUp is the other half: a normal write
+// must not be mistaken for a queued one.
+func TestSafeWrite_ReportsDurableWhenBackendUp(t *testing.T) {
+	fb := &fakeBackend{}
+	c, err := cache.NewBoltCache(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewBoltCache: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	d := New(fb, c, newGenRegistry(), nil)
+
+	outcome, err := d.SafeWrite(context.Background(), "proj-11", "notes.md",
+		func([]byte) []byte { return []byte("durable content") }, "agent-1", "s1")
+	if err != nil {
+		t.Fatalf("SafeWrite: %v", err)
+	}
+	if outcome != WriteDurable {
+		t.Errorf("outcome = %v, want WriteDurable", outcome)
+	}
+	if depth, _ := c.QueueDepth(context.Background(), "proj-11"); depth != 0 {
+		t.Errorf("queue depth = %d after a durable write, want 0", depth)
+	}
+}
+
+// DeleteVersion is unsupported: this fake keeps no version history, so a
+// redaction test must use versionedBackend instead of silently passing here.
+func (f *fakeBackend) DeleteVersion(context.Context, string, string, string) error {
+	return errors.New("fakeBackend does not keep version history")
 }

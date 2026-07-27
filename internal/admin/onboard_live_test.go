@@ -135,6 +135,10 @@ func splitCSVForTest(s string) []string {
 	return out
 }
 
+// timestamp builds the unique suffix live tests append to project IDs. It uses
+// no separator between the seconds and nanoseconds because the result becomes a
+// project ID, and a "." is illegal in an S3 bucket name — these tests generated
+// IDs that could never have been valid buckets until ValidateID caught it.
 func timestamp() string {
-	return time.Now().UTC().Format("20060102150405.000000000")
+	return time.Now().UTC().Format("20060102150405000000000")
 }

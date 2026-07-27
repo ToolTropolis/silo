@@ -23,6 +23,12 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
+// Brand assets are embedded so the binary stays self-contained — a dashboard
+// that needs files next to it on disk is one more thing to get wrong at deploy.
+//
+//go:embed static/favicon.ico static/logo.svg
+var staticFS embed.FS
+
 // Registry is the read-only slice of the tenant registry the dashboard needs.
 type Registry interface {
 	List(ctx context.Context) ([]registry.ProjectRecord, error)
@@ -34,6 +40,16 @@ type MemoryReader interface {
 	ListPaths(ctx context.Context, projectID, prefix string) ([]string, error)
 	ListVersions(ctx context.Context, projectID, path string) ([]backend.ObjectVersion, error)
 	Get(ctx context.Context, projectID, path, versionID string) ([]byte, backend.ObjectVersion, error)
+}
+
+// QueueReader reports writes that are buffered on the daemon's local disk and
+// have not reached the durable backend yet.
+//
+// Optional like every other dependency: when nil the registry view simply omits
+// the column rather than claiming zero, since "no unsynced writes" and "nobody
+// checked" must not look the same.
+type QueueReader interface {
+	QueueDepth(ctx context.Context, projectID string) (int, error)
 }
 
 // ProposalReviewer lists, loads, and promotes Distilator runs.
@@ -48,6 +64,7 @@ type Server struct {
 	registry Registry
 	memory   MemoryReader
 	reviewer ProposalReviewer
+	queues   QueueReader
 	// templates holds one parsed set per view — see parseViews.
 	templates map[string]*template.Template
 	mux       *http.ServeMux
@@ -56,7 +73,7 @@ type Server struct {
 // NewServer constructs the dashboard HTTP server. Any dependency may be nil;
 // the corresponding view then reports that it isn't configured rather than
 // panicking, so the dashboard is useful even against a partial deployment.
-func NewServer(reg Registry, mem MemoryReader, rev ProposalReviewer) (*Server, error) {
+func NewServer(reg Registry, mem MemoryReader, rev ProposalReviewer, queues QueueReader) (*Server, error) {
 	// Each view is parsed into its OWN set (layout + that view). Every view
 	// defines a block named "body"; parsing them all into one set would make
 	// the last one win and silently render for every route.
@@ -64,7 +81,7 @@ func NewServer(reg Registry, mem MemoryReader, rev ProposalReviewer) (*Server, e
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{registry: reg, memory: mem, reviewer: rev, templates: views, mux: http.NewServeMux()}
+	s := &Server{registry: reg, memory: mem, reviewer: rev, queues: queues, templates: views, mux: http.NewServeMux()}
 	s.routes()
 	return s, nil
 }
@@ -88,6 +105,25 @@ func (s *Server) routes() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	// Brand assets. Long-cached: these change only when the logo does, and
+	// browsers request /favicon.ico on every cold load.
+	s.mux.HandleFunc("/favicon.ico", serveAsset("static/favicon.ico", "image/x-icon"))
+	s.mux.HandleFunc("/logo.svg", serveAsset("static/logo.svg", "image/svg+xml"))
+}
+
+// serveAsset returns a handler for one embedded static file.
+func serveAsset(name, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := staticFS.ReadFile(name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(data)
+	}
 }
 
 // Handler exposes the routed handler for the process to serve.

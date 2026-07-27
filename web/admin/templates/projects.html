@@ -1,0 +1,121 @@
+{{define "body"}}
+{{if not .CanProv}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">
+    <strong>No provisioner configured.</strong>
+    <p>Onboarding and teardown are unavailable. Start silo-admin with S3 admin credentials.</p>
+  </div>
+</div>
+{{end}}
+
+{{if not .DaemonUp}}
+<div class="notice warn">
+  <span class="n-ico i-warn">{{template "ico-warn-tri" .}}</span>
+  <div class="n-body">
+    <strong>No daemon reachable, so unsynced write counts are unknown.</strong>
+    <p>Tearing down a project with queued writes would lose them. The daemon's own purge
+      gate still refuses, but this page cannot warn you in advance.</p>
+  </div>
+</div>
+{{end}}
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>Projects</h2>
+      <p class="hint">Deleting a project takes four confirmed steps. Each destroys something different, and none can be undone.</p>
+    </div>
+  </div>
+
+  {{if .Rows}}
+  <div class="card-body tight">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Repository</th>
+            <th>Status</th>
+            <th>Bucket</th>
+            <th>Tokens</th>
+            <th class="num">Unsynced</th>
+            <th>Delete</th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Rows}}
+          <tr>
+            <td><a href="/project?project={{.Record.ProjectID}}"><code class="id">{{.Record.ProjectID}}</code></a></td>
+            <td class="fs-sm">
+              {{if .Record.RepoURL}}<span class="mono">{{repoLabel .Record.RepoURL}}</span>
+              {{else if .Record.RepoPath}}<span class="mono">{{.Record.RepoPath}}</span>
+              {{else}}<span class="subtle">not recorded</span>{{end}}
+            </td>
+            <td>
+              <span class="badge {{if eq .Record.Status "active"}}ok{{else if eq .Record.Status "decommissioning"}}warn{{else}}{{end}}">
+                <span class="dot"></span>{{.Record.Status}}
+              </span>
+            </td>
+            <td>
+              {{if .Record.BucketName}}<code>{{.Record.BucketName}}</code>
+              {{else}}<span class="subtle">deleted</span>{{end}}
+            </td>
+            <td class="fs-sm">
+              <a href="/project?project={{.Record.ProjectID}}">Manage</a>
+            </td>
+            <td class="num">
+              {{if .PendingKnown}}
+                {{if gt .Pending 0}}<span class="unsynced">{{.Pending}}</span>{{else}}0{{end}}
+              {{else}}<span class="unknown">unknown</span>{{end}}
+            </td>
+            <td>
+              {{if and $.CanProv .NextStep}}
+                {{if .Irreversible}}
+                  {{/* The destructive step demands the project ID typed exactly,
+                       matching siloctl rather than being a single click. */}}
+                  <form method="post" action="/teardown">
+                    <input type="hidden" name="project" value="{{.Record.ProjectID}}">
+                    <input type="hidden" name="step" value="{{.NextStep}}">
+                    <div class="btn-row">
+                      <input type="text" name="confirm" class="compact"
+                             placeholder="type {{.Record.ProjectID}}" autocomplete="off">
+                      <button class="btn btn-sm btn-danger" type="submit">{{.StepLabel}}</button>
+                    </div>
+                    <div class="fs-sm muted" style="margin-top:5px">
+                      {{.StepDetail}}
+                      {{if gt .Pending 0}}
+                        <div class="unsynced">{{.Pending}} unsynced write(s) will be refused until they drain.</div>
+                      {{end}}
+                    </div>
+                  </form>
+                {{else}}
+                  <form method="post" action="/teardown" class="inline"
+                        onsubmit="return confirm('{{.StepDetail}}\n\nContinue deleting {{.Record.ProjectID}}?')">
+                    <input type="hidden" name="project" value="{{.Record.ProjectID}}">
+                    <input type="hidden" name="step" value="{{.NextStep}}">
+                    <button class="btn btn-sm {{if eq .StepNumber 1}}btn-ghost{{else}}btn-danger{{end}}" type="submit">{{.StepLabel}}</button>
+                  </form>
+                  <div class="fs-sm subtle" style="margin-top:4px">{{.StepDetail}}</div>
+                {{end}}
+              {{else if $.CanProv}}
+                <span class="subtle">—</span>
+              {{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    <div class="empty-title">No projects yet</div>
+    <p>Onboarding provisions a bucket, an encryption key, and a scoped credential.</p>
+    {{if .CanProv}}
+      <a class="btn btn-primary" href="/onboard/name">{{template "ico-plus" .}} Onboard your first project</a>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

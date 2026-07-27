@@ -1,0 +1,27 @@
+-- Intentionally not a SQL backfill. See backfillGenerations in rqlite.go.
+--
+-- Records onboarded before 004 carry an empty generation, which the daemon
+-- treats as unverifiable and so refuses to serve the read path's outage
+-- fallback (internal/daemon/generation.go). That is correct — an empty
+-- generation would match every cache file on disk, including a torn-down
+-- tenant's — but it leaves those projects permanently unable to cache.
+--
+-- Filling them in SQL is impossible on rqlite. Every non-deterministic
+-- function is rewritten on the leader BEFORE the statement is replicated, so
+-- followers store the leader's value instead of recomputing their own. That is
+-- what makes randomblob() Raft-safe, and it is also what makes it useless
+-- here: the substitution happens once per statement, so
+--
+--     UPDATE projects SET generation = lower(hex(randomblob(16)))
+--
+-- assigns the SAME value to every backfilled row, and one project's cache file
+-- would then satisfy another project's bind — the exact hole 004 closed.
+-- Verified against the dev cluster: random() and randomblob() both returned an
+-- identical value for every row of a multi-row SELECT, and no hash function
+-- (sha256/md5/sha1) exists in the build to mix in the per-row project_id.
+--
+-- The backfill therefore runs in Go, one crypto/rand value per project, from
+-- the same newGeneration-style mint used at onboard. This file exists so the
+-- numbering stays contiguous and this reasoning is recorded where the next
+-- person will look for it.
+SELECT 1;

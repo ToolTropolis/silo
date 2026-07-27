@@ -43,3 +43,6 @@ go.work.sum
 .vscode/
 *.swp
 *~
+
+# Runtime state from deploy/demo.sh (PIDs, logs, fetched binaries).
+.silo-demo/

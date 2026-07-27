@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,13 +12,24 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/tooltropolis/silo/internal/project"
 )
 
 // Bucket names within each project's bbolt file.
 var (
 	contentBucket = []byte("content") // path -> content bytes (the warm cache)
 	queueBucket   = []byte("queue")   // monotonic seq -> serialized PendingWrite
+	metaBucket    = []byte("meta")    // file-level facts, e.g. which tenant owns it
 )
+
+// generationKey records which incarnation of a project owns this cache file.
+var generationKey = []byte("generation")
+
+// defaultOpenTimeout bounds the wait for another process's file lock. Long
+// enough to ride out a brief handover, short enough that a misconfiguration
+// surfaces quickly.
+const defaultOpenTimeout = 5 * time.Second
 
 // BoltCache is the default LocalCache. It keeps one bbolt file per project under
 // a base directory (opened lazily on first use) with a content bucket for the
@@ -25,9 +37,22 @@ var (
 // durable backend was unreachable.
 type BoltCache struct {
 	baseDir string
+	// openTimeout bounds how long we wait for another process to release a
+	// project's file lock. Overridable so tests don't pay the full wait.
+	openTimeout time.Duration
+	// now supplies the clock, so eviction tests can advance time instead of
+	// sleeping.
+	now func() time.Time
 
 	mu  sync.Mutex
-	dbs map[string]*bolt.DB // projectID -> open handle
+	dbs map[string]*projectDB // projectID -> open handle
+}
+
+// projectDB is an open handle plus the generation it was verified against, so
+// the check happens once per open rather than on every read.
+type projectDB struct {
+	db         *bolt.DB
+	generation string
 }
 
 var _ LocalCache = (*BoltCache)(nil)
@@ -38,28 +63,57 @@ func NewBoltCache(baseDir string) (*BoltCache, error) {
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cache: create base dir: %w", err)
 	}
-	return &BoltCache{baseDir: baseDir, dbs: make(map[string]*bolt.DB)}, nil
+	// A compaction interrupted by a crash leaves a temp copy behind. Left alone
+	// it would double that project's disk usage indefinitely, which is the
+	// opposite of what compaction is for.
+	if err := sweepCompactLeftovers(baseDir); err != nil {
+		return nil, err
+	}
+	return &BoltCache{
+		baseDir:     baseDir,
+		openTimeout: defaultOpenTimeout,
+		now:         time.Now,
+		dbs:         make(map[string]*projectDB),
+	}, nil
 }
 
 // db opens (once) and returns the bbolt handle for a project, initializing its
 // buckets. Handles are cached so concurrent callers share one *bolt.DB, which
 // bbolt serializes internally.
 func (c *BoltCache) db(projectID string) (*bolt.DB, error) {
-	if projectID == "" {
-		return nil, fmt.Errorf("cache: empty projectID")
+	// Validate before the ID reaches filepath.Join below. This is defence in
+	// depth — onboarding already rejects bad IDs — but it is the last point
+	// before an ID becomes a real path, and "../escape" here would create a
+	// bbolt file outside the cache directory entirely.
+	if err := project.ValidateID(projectID); err != nil {
+		return nil, fmt.Errorf("cache: %w", err)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if db, ok := c.dbs[projectID]; ok {
-		return db, nil
+	return c.openLocked(projectID)
+}
+
+// openLocked returns the project's handle, opening it if needed. The caller
+// must hold c.mu — BindProject already does, and taking it twice would
+// deadlock.
+func (c *BoltCache) openLocked(projectID string) (*bolt.DB, error) {
+	if pdb, ok := c.dbs[projectID]; ok {
+		return pdb.db, nil
 	}
 	path := filepath.Join(c.baseDir, projectID+".bbolt")
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: c.openTimeout})
 	if err != nil {
+		// A timeout here almost always means another Silo process already owns
+		// this cache directory — bbolt locks each file exclusively. Say so:
+		// a bare five-second timeout gives no hint where to look.
+		if errors.Is(err, bolt.ErrTimeout) {
+			return nil, fmt.Errorf("cache: open %s: %w (another process — silod? — already owns this cache directory)",
+				path, ErrCacheLocked)
+		}
 		return nil, fmt.Errorf("cache: open %s: %w", path, err)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{contentBucket, queueBucket} {
+		for _, b := range [][]byte{contentBucket, queueBucket, metaBucket} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -69,8 +123,176 @@ func (c *BoltCache) db(projectID string) (*bolt.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("cache: init buckets: %w", err)
 	}
-	c.dbs[projectID] = db
+	c.dbs[projectID] = &projectDB{db: db}
 	return db, nil
+}
+
+// BindProject verifies that this project's cache file belongs to the given
+// generation, discarding its contents if it does not.
+//
+// The cache file is named after the projectID, so a project torn down and later
+// re-onboarded under the same ID inherits the previous tenant's file. Without
+// this check the read path's outage fallback would serve the old tenant's
+// memory to the new project, and the sync worker would replay the old tenant's
+// queued writes into the new project's bucket.
+//
+// The check runs on open, not per read: once bound, the handle carries its
+// verified generation and Get/Put cost exactly what they cost before.
+//
+// A file with no stamp predates generations. Its content is discarded — it
+// cannot be proven to belong to this tenant — but its QUEUE is preserved, since
+// those are unsynced writes and dropping them would be data loss.
+func (c *BoltCache) BindProject(ctx context.Context, projectID, generation string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if generation == "" {
+		return fmt.Errorf("cache: bind %q: %w", projectID, ErrNoGeneration)
+	}
+	if err := project.ValidateID(projectID); err != nil {
+		return fmt.Errorf("cache: %w", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// An already-bound handle for a different generation means the project was
+	// re-onboarded while this process was running. Close it so the reopen below
+	// re-runs the check rather than serving the old tenant from a live handle.
+	if pdb, ok := c.dbs[projectID]; ok {
+		if pdb.generation == generation {
+			return nil
+		}
+		_ = pdb.db.Close()
+		delete(c.dbs, projectID)
+	}
+
+	db, err := c.openLocked(projectID)
+	if err != nil {
+		return err
+	}
+
+	wiped := 0
+	err = db.Update(func(tx *bolt.Tx) error {
+		stamped := tx.Bucket(metaBucket).Get(generationKey)
+		if string(stamped) == generation {
+			return nil // ours
+		}
+		// Either a previous tenant's file or a pre-generation one. Neither can
+		// be shown to belong to this project, so the content goes.
+		wiped = tx.Bucket(contentBucket).Stats().KeyN
+		if err := tx.DeleteBucket(contentBucket); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucket(contentBucket); err != nil {
+			return err
+		}
+		// A stamped-but-different generation means the queue holds the previous
+		// tenant's writes, which must never replay into this project's bucket.
+		// An unstamped file predates generations, so its queue is this
+		// project's own unsynced data and is kept.
+		if len(stamped) > 0 {
+			if err := tx.DeleteBucket(queueBucket); err != nil {
+				return err
+			}
+			if _, err := tx.CreateBucket(queueBucket); err != nil {
+				return err
+			}
+		}
+		if err := tx.Bucket(metaBucket).Put(formatVersionKey, itob(uint64(entryVersion))); err != nil {
+			return err
+		}
+		return tx.Bucket(metaBucket).Put(generationKey, []byte(generation))
+	})
+	if err == nil {
+		// Separate pass so a file that matches its generation still gets its
+		// entry format checked — the two version independently.
+		err = c.ensureEntryFormat(db)
+	}
+	if err != nil {
+		_ = db.Close()
+		delete(c.dbs, projectID)
+		return fmt.Errorf("cache: bind %q: %w", projectID, err)
+	}
+
+	if wiped > 0 {
+		// Loud on purpose: reaching this means a teardown purge did not happen,
+		// and someone should know a previous tenant's data was sitting here.
+		fmt.Printf("cache: %s: discarded %d cached entr(ies) belonging to a previous generation\n",
+			projectID, wiped)
+	}
+
+	c.dbs[projectID].generation = generation
+	return nil
+}
+
+// PurgeProject closes a project's cache handle and removes its file.
+//
+// Removing the file rather than emptying the buckets is deliberate: bbolt frees
+// pages for reuse but never shrinks a file, so clearing the buckets would leave
+// the disk usage exactly where it was. It also means a torn-down project leaves
+// nothing behind at all, rather than an empty file holding its old name.
+//
+// Off the LocalCache interface, unlike BindProject: this is an operator action,
+// not a per-request contract, so a cache that cannot purge should surface a
+// clear error rather than fail to compile.
+//
+// Purging a project that has no cache file is not an error — teardown should be
+// able to run whether or not this host ever served that project.
+func (c *BoltCache) PurgeProject(ctx context.Context, projectID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Validate before the ID reaches filepath.Join: this function deletes files,
+	// so an unchecked "../something" here would be considerably worse than a
+	// stray read.
+	if err := project.ValidateID(projectID); err != nil {
+		return fmt.Errorf("cache: %w", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if pdb, ok := c.dbs[projectID]; ok {
+		if err := pdb.db.Close(); err != nil {
+			return fmt.Errorf("cache: purge %q: close handle: %w", projectID, err)
+		}
+		delete(c.dbs, projectID)
+	}
+
+	path := filepath.Join(c.baseDir, projectID+".bbolt")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cache: purge %q: %w", projectID, err)
+	}
+	return nil
+}
+
+// ensureEntryFormat discards content written in an older entry layout.
+//
+// The generation stamp and the entry format version answer different questions —
+// "whose data is this?" and "can I read it?" — so a file can match its
+// generation while still holding entries this build cannot parse. Checking them
+// separately means a future format change is a deliberate one-time cold cache
+// rather than a scattering of unreadable values.
+//
+// Content only: the queue is JSON and versions independently, and discarding it
+// would be data loss.
+func (c *BoltCache) ensureEntryFormat(db *bolt.DB) error {
+	return db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(metaBucket)
+		if stored := meta.Get(formatVersionKey); len(stored) == 8 {
+			if btoi(stored) == uint64(entryVersion) {
+				return nil
+			}
+		}
+		if err := tx.DeleteBucket(contentBucket); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucket(contentBucket); err != nil {
+			return err
+		}
+		return meta.Put(formatVersionKey, itob(uint64(entryVersion)))
+	})
 }
 
 // Close releases every open bbolt handle. Safe to call once at shutdown.
@@ -78,8 +300,8 @@ func (c *BoltCache) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var firstErr error
-	for id, db := range c.dbs {
-		if err := db.Close(); err != nil && firstErr == nil {
+	for id, pdb := range c.dbs {
+		if err := pdb.db.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		delete(c.dbs, id)
@@ -102,8 +324,16 @@ func (c *BoltCache) Get(ctx context.Context, projectID, path string) ([]byte, er
 		if v == nil {
 			return ErrNotFound
 		}
+		content, _, decErr := decodeEntry(v)
+		if decErr != nil {
+			// A corrupt entry is treated as absent rather than fatal: the
+			// backend is the source of truth, so the caller can still get the
+			// real content. Failing here would turn a damaged cache byte into
+			// an outage.
+			return ErrNotFound
+		}
 		// bbolt values are only valid within the txn — copy before returning.
-		out = append([]byte(nil), v...)
+		out = append([]byte(nil), content...)
 		return nil
 	})
 	if err != nil {
@@ -121,8 +351,9 @@ func (c *BoltCache) Put(ctx context.Context, projectID, path string, content []b
 	if err != nil {
 		return err
 	}
+	entry := encodeEntry(content, c.now())
 	return db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(contentBucket).Put([]byte(path), content)
+		return tx.Bucket(contentBucket).Put([]byte(path), entry)
 	})
 }
 
@@ -206,6 +437,70 @@ func (c *BoltCache) DrainQueue(ctx context.Context, projectID string) ([]Pending
 	return writes, nil
 }
 
+// QueueDepth reports how many writes are buffered for a project without
+// consuming them.
+//
+// This exists because DrainQueue is destructive: it empties the bucket in the
+// same transaction that reads it, so the only way to count the backlog was to
+// destroy it. An operator asking "is it safe to shut down?" would have caused
+// the data loss they were checking for.
+//
+// Read-only (db.View) and O(1)-ish via bucket statistics rather than walking and
+// unmarshalling every entry, since callers only want the count.
+func (c *BoltCache) QueueDepth(ctx context.Context, projectID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	db, err := c.db(projectID)
+	if err != nil {
+		return 0, err
+	}
+	var depth int
+	err = db.View(func(tx *bolt.Tx) error {
+		depth = tx.Bucket(queueBucket).Stats().KeyN
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("cache: queue depth %q: %w", projectID, err)
+	}
+	return depth, nil
+}
+
+// OldestQueued returns the QueuedAt stamp of the oldest buffered write, or ""
+// when the queue is empty.
+//
+// Depth alone is hard to act on: "12 pending" reads very differently from "12
+// pending, oldest 3 hours ago". Deliberately not on the LocalCache interface —
+// it is a reporting nicety, and the interface should stay minimal.
+func (c *BoltCache) OldestQueued(ctx context.Context, projectID string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	db, err := c.db(projectID)
+	if err != nil {
+		return "", err
+	}
+	var oldest string
+	err = db.View(func(tx *bolt.Tx) error {
+		// Keys are a monotonic big-endian sequence, so the first key is the
+		// oldest entry — no scan needed.
+		_, v := tx.Bucket(queueBucket).Cursor().First()
+		if v == nil {
+			return nil
+		}
+		var w PendingWrite
+		if err := json.Unmarshal(v, &w); err != nil {
+			return fmt.Errorf("unmarshal pending write: %w", err)
+		}
+		oldest = w.QueuedAt
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("cache: oldest queued %q: %w", projectID, err)
+	}
+	return oldest, nil
+}
+
 // itob encodes a uint64 sequence as an 8-byte big-endian key so bbolt's
 // byte-order iteration matches numeric order.
 func itob(v uint64) []byte {
@@ -213,3 +508,7 @@ func itob(v uint64) []byte {
 	binary.BigEndian.PutUint64(b, v)
 	return b
 }
+
+// btoi reverses itob. Callers must check the length first; an 8-byte value is
+// the only thing itob ever produces.
+func btoi(b []byte) uint64 { return binary.BigEndian.Uint64(b) }

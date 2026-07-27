@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // seaweedEndpoint is where the integration test looks for a SeaweedFS S3
@@ -167,4 +169,30 @@ func TestSeaweedFS_PreconditionFailed(t *testing.T) {
 		t.Fatalf("losing write leaked: want %q, got %q", "first update", got)
 	}
 	_ = v2
+}
+
+// TestIsNotFound_StrictClassification: the daemon deletes a cached entry when
+// the backend reports not-found, so a transport failure misclassified as a 404
+// would silently drop good cache entries during an outage — exactly when the
+// cache matters most.
+func TestIsNotFound_StrictClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"typed NoSuchKey", &types.NoSuchKey{}, true},
+		{"generic error", errors.New("boom"), false},
+		{"connection refused", errors.New("dial tcp: connect: connection refused"), false},
+		{"connection reset", errors.New("read: connection reset by peer"), false},
+		{"nil", nil, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNotFound(tc.err); got != tc.want {
+				t.Errorf("isNotFound(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
 }

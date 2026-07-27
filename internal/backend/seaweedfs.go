@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tooltropolis/silo/internal/project"
 	"io"
 	"strings"
 
@@ -66,12 +67,22 @@ func NewSeaweedFS(cfg Config) (*SeaweedFS, error) {
 
 // bucketFor maps a projectID to its dedicated bucket name — the isolation
 // boundary. One project's credential is scoped to one bucket.
-func bucketFor(projectID string) string {
-	return bucketPrefix + projectID
+//
+// It validates rather than trusting the caller: the bucket name is the isolation
+// boundary itself, so an ID that slipped through (an uppercase variant, say)
+// could address a bucket belonging to a different project.
+func bucketFor(projectID string) (string, error) {
+	if err := project.ValidateID(projectID); err != nil {
+		return "", fmt.Errorf("backend: %w", err)
+	}
+	return bucketPrefix + projectID, nil
 }
 
 func (s *SeaweedFS) Put(ctx context.Context, projectID, path string, content []byte, opts PutOptions) (ObjectVersion, error) {
-	bucket := bucketFor(projectID)
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return ObjectVersion{}, err
+	}
 
 	// Enforce the CAS precondition ourselves: SeaweedFS's PutObject doesn't
 	// honor If-Match, so read the current ETag and reject if it moved. This
@@ -118,7 +129,10 @@ func (s *SeaweedFS) Put(ctx context.Context, projectID, path string, content []b
 }
 
 func (s *SeaweedFS) Get(ctx context.Context, projectID, path string, versionID string) ([]byte, ObjectVersion, error) {
-	bucket := bucketFor(projectID)
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return nil, ObjectVersion{}, err
+	}
 	in := &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(path),
@@ -152,7 +166,10 @@ func (s *SeaweedFS) Get(ctx context.Context, projectID, path string, versionID s
 // ListPaths returns current object keys under a prefix, paginating through the
 // full result set so large projects aren't silently truncated at 1000 keys.
 func (s *SeaweedFS) ListPaths(ctx context.Context, projectID, prefix string) ([]string, error) {
-	bucket := bucketFor(projectID)
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return nil, err
+	}
 	var (
 		paths []string
 		token *string
@@ -178,7 +195,10 @@ func (s *SeaweedFS) ListPaths(ctx context.Context, projectID, prefix string) ([]
 }
 
 func (s *SeaweedFS) ListVersions(ctx context.Context, projectID, path string) ([]ObjectVersion, error) {
-	bucket := bucketFor(projectID)
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return nil, err
+	}
 	out, err := s.client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucket),
 		Prefix: aws.String(path),
@@ -206,9 +226,37 @@ func (s *SeaweedFS) ListVersions(ctx context.Context, projectID, path string) ([
 	return versions, nil
 }
 
+// DeleteVersion destroys one version's bytes. Verified against SeaweedFS: the
+// named version disappears from ListVersions and every other version of the
+// path stays readable.
+func (s *SeaweedFS) DeleteVersion(ctx context.Context, projectID, path, versionID string) error {
+	if versionID == "" {
+		// Without a version ID this is DeleteObject, which creates a delete
+		// marker and hides the whole path — a very different and much worse
+		// outcome than the caller asked for.
+		return fmt.Errorf("backend: delete version %s/%s: %w", projectID, path, ErrNoVersionID)
+	}
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(path),
+		VersionId: aws.String(versionID),
+	})
+	if err != nil {
+		return fmt.Errorf("backend: delete version %s/%s@%s: %w", bucket, path, versionID, err)
+	}
+	return nil
+}
+
 func (s *SeaweedFS) Delete(ctx context.Context, projectID, path string) error {
-	bucket := bucketFor(projectID)
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(path),
 	})
@@ -219,8 +267,11 @@ func (s *SeaweedFS) Delete(ctx context.Context, projectID, path string) error {
 }
 
 func (s *SeaweedFS) CreateBucket(ctx context.Context, projectID string) error {
-	bucket := bucketFor(projectID)
-	_, err := s.client.CreateBucket(ctx, &s3.CreateBucketInput{
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil && !isAlreadyOwned(err) {
@@ -240,8 +291,11 @@ func (s *SeaweedFS) CreateBucket(ctx context.Context, projectID string) error {
 }
 
 func (s *SeaweedFS) DeleteBucket(ctx context.Context, projectID string) error {
-	bucket := bucketFor(projectID)
-	_, err := s.client.DeleteBucket(ctx, &s3.DeleteBucketInput{
+	bucket, err := bucketFor(projectID)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteBucket(ctx, &s3.DeleteBucketInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {

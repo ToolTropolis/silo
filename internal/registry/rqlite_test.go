@@ -180,3 +180,54 @@ func TestRegistry_RequiresProjectAndBucket(t *testing.T) {
 		t.Fatal("Register with empty fields: want error, got nil")
 	}
 }
+
+// TestSchema_MigrationsAreRecordedAndSkipped guards the property the ledger
+// exists for: a migration runs exactly once.
+//
+// Before the ledger, idempotency depended on every migration being CREATE TABLE
+// IF NOT EXISTS. That silently constrains every future migration — an ALTER
+// TABLE would apply on the first run and then fail the daemon's startup on the
+// second with "duplicate column name".
+func TestSchema_MigrationsAreRecordedAndSkipped(t *testing.T) {
+	r := newLiveRegistry(t)
+	defer r.Close()
+	ctx := context.Background()
+
+	// Every embedded migration must be recorded after the first connect.
+	rows, err := r.conn.QueryOneContext(ctx, `SELECT name FROM schema_migrations`)
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	recorded := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		recorded[name] = true
+	}
+	for _, want := range []string{"001_projects.sql", "002_locks.sql", ledgerMigration} {
+		if !recorded[want] {
+			t.Errorf("migration %q should be recorded as applied", want)
+		}
+	}
+
+	// Re-running must be a no-op rather than an error — this is what lets a
+	// daemon restart safely, and what makes non-idempotent DDL possible later.
+	before := len(recorded)
+	if err := r.ensureSchema(ctx); err != nil {
+		t.Fatalf("re-running ensureSchema must be safe: %v", err)
+	}
+	rows2, err := r.conn.QueryOneContext(ctx, `SELECT COUNT(*) FROM schema_migrations`)
+	if err != nil {
+		t.Fatalf("count ledger: %v", err)
+	}
+	rows2.Next()
+	var after int
+	if err := rows2.Scan(&after); err != nil {
+		t.Fatalf("scan count: %v", err)
+	}
+	if after != before {
+		t.Errorf("ledger grew from %d to %d on re-run — migrations must be recorded once", before, after)
+	}
+}

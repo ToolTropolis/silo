@@ -1,0 +1,19 @@
+-- Read-only agent tokens.
+--
+-- Every token grants read AND write, so an agent processing untrusted input can
+-- be prompt-injected into writing malicious content that later sessions then
+-- read back as trusted memory. Anthropic's managed-agent memory treats this as
+-- the default hazard and enforces read_only at the filesystem; Silo had no
+-- read-only concept at all, so reference material an agent cannot corrupt was
+-- impossible to offer.
+--
+-- INTEGER rather than BOOLEAN: SQLite has no boolean type, and rqlite returns
+-- the column as a number. DEFAULT 0 makes every existing token read-write,
+-- which is what it already was — this migration must not silently downgrade a
+-- token an agent is currently writing with.
+--
+-- NOT NULL so the scope is never ambiguous. A NULL here would have to be
+-- interpreted at every authorization, and the safe interpretation (deny writes)
+-- would break existing tokens while the convenient one (allow) would make a
+-- missing value grant more than it should.
+ALTER TABLE agent_tokens ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0;

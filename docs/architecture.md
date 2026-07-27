@@ -34,6 +34,12 @@ graph TD
   review.
 - **Ops / admin** — dashboard and the manual, per-layer teardown.
 
+![Silo system architecture](./architecture/system-arch.svg)
+
+Editable source: [`architecture/system-arch.drawio`](./architecture/system-arch.drawio)
+(open at [app.diagrams.net](https://app.diagrams.net) or the VS Code Draw.io
+Integration extension).
+
 ## Core interfaces (the contract)
 
 | Interface | Package | Role |

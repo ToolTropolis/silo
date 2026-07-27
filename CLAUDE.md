@@ -20,14 +20,19 @@ go test -race ./...         # what CI runs
 gofmt -l .                  # must print nothing (CI fails otherwise); gofmt -w . to fix
 
 docker compose -f deploy/docker-compose.yaml up -d   # local deps (SeaweedFS, rqlite x3, Vault)
+deploy/bootstrap-dev.sh                              # re-run after EVERY `up` — Vault seals on restart
 ```
 
-Integration tests need the docker stack up; they're guarded so `go test ./...`
-stays green without it.
+Integration tests need the docker stack up. They're gated on `SILO_TEST_*` env
+vars (`SILO_TEST_VAULT_ADDR`, `SILO_TEST_RQLITE_ADDRS`, `SILO_TEST_S3_*`, …) and
+skip when unset, so plain `go test ./...` stays green without the stack.
 
 ## Layout
 
-- `cmd/` — `silod` (daemon), `siloctl` (admin CLI), `silo-distil` (Distilator runner).
+- `cmd/` — `silod` (daemon), `siloctl` (admin CLI), `silo-distil` (Distilator runner),
+  `silo-admin` (operator console), `silo-dashboard` (dashboard server),
+  `silo-mcp` (exposes a project's memory to an agent over MCP — this is how a
+  repo actually connects to Silo).
 - `internal/cache` — bbolt local fast path + offline write queue (`LocalCache`).
 - `internal/backend` — durable storage (`DurableBackend`); SeaweedFS adapter is default.
 - `internal/registry` — tenant registry on rqlite (`TenantRegistry`).
@@ -37,6 +42,12 @@ stays green without it.
 - `internal/admin` — onboarding (automated) + teardown (manual, per-layer).
 - `pkg/client` — agent-facing SDK (`Read`/`Write`/`List`/`Search`).
 - `web/dashboard` — v1 read/review web surface.
+- `web/admin` — operator console: cache policy, onboarding wizard, teardown.
+- `internal/mcpserver` — the MCP tool layer over `pkg/client`.
+- `internal/project` — project ID validation (`ErrInvalidID`).
+- `internal/devstack` — dev-stack default addresses.
+- `internal/transcript` — transcript capture for the Distilator.
+- `internal/testsupport` — in-memory backend for tests.
 
 ## Conventions & rules from the spec
 
@@ -56,6 +67,11 @@ stays green without it.
 
 Don't commit, push, or tag on your own initiative — propose the commands. Use
 Conventional Commits (`feat:`/`fix:`/`docs:`/`chore:`); they drive the changelog.
+
+**Branches:** `main` is the **dev** branch (branch from it, merge into it).
+`PRD` is **production** — it only ever receives a promotion PR from `main`,
+never a direct push. A `.githooks/pre-push` hook refuses direct pushes to `PRD`
+(`git config core.hooksPath .githooks` to enable).
 
 - **No `Co-Authored-By` trailer in commits.**
 - Reference the Linear issue: put `(NAV-xx)` in the subject and `Ref NAV-xx` in

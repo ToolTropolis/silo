@@ -23,13 +23,24 @@ type Daemon struct {
 	// path for a project at a time.
 	locker     registry.Locker
 	instanceID string
+
+	// generations memoizes which incarnation of each project owns its cache.
+	generations *generations
+
+	// entryLimits caps the size of a single write (optional): see
+	// WithEntryLimits. Nil means no limit.
+	entryLimits EntryLimitSource
+
+	// redactions records destroyed versions (optional): see
+	// WithRedactionAudit. Nil refuses redaction outright.
+	redactions RedactionRecorder
 }
 
 // New constructs a Daemon from its dependencies. Leader election is opt-in via
 // WithLock; session handling is wired in as those pieces land (build sequence
 // step 3, docs/architecture.md).
 func New(b backend.DurableBackend, c cache.LocalCache, r registry.TenantRegistry, k kms.KeyManager) *Daemon {
-	return &Daemon{backend: b, cache: c, registry: r, kms: k}
+	return &Daemon{backend: b, cache: c, registry: r, kms: k, generations: newGenerations()}
 }
 
 // WithLock configures per-project leadership coordination: locker is the

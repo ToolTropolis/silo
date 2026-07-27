@@ -84,32 +84,91 @@ func (o *Onboarder) Teardown(ctx context.Context, projectID string, step Teardow
 
 	switch step {
 	case StepRevokeCredential:
-		if rec.CredentialID != "" {
-			if err := o.Creds.Revoke(ctx, rec.CredentialID); err != nil {
-				return fmt.Errorf("admin: teardown %q: revoke credential: %w", projectID, err)
+		// Agent tokens die with the S3 credential, not at deregister.
+		//
+		// This is the step whose whole purpose is removing access, and it runs
+		// before anything is destroyed. Leaving tokens live until the last step
+		// would mean an agent could still read and write a project through the
+		// operator-paced gap while its bucket was being deleted underneath it.
+		if o.Tokens != nil {
+			n, err := o.Tokens.RevokeProjectTokens(ctx, projectID)
+			if err != nil {
+				return fmt.Errorf("admin: teardown %q: revoke agent tokens: %w", projectID, err)
 			}
+			if n > 0 {
+				fmt.Printf("  revoked %d agent token(s) for %q.\n", n, projectID)
+			}
+		} else {
+			fmt.Printf("  WARNING: no token store configured, so %q's agent tokens were NOT revoked.\n"+
+				"           They will keep authorizing until revoked by hand.\n", projectID)
+		}
+
+		if err := o.Creds.Revoke(ctx, rec.CredentialID); err != nil {
+			return fmt.Errorf("admin: teardown %q: revoke credential: %w", projectID, err)
 		}
 		// Mark the project as decommissioning before anything is destroyed, so
 		// an interrupted teardown is visible rather than looking healthy.
 		if err := o.Registry.UpdateStatus(ctx, projectID, registry.StatusDecommissioning); err != nil {
 			return fmt.Errorf("admin: teardown %q: mark decommissioning: %w", projectID, err)
 		}
+		// Clear the ref only after the revoke succeeded, so a failure leaves the
+		// step pending rather than skipping it.
+		if err := o.Registry.UpdateRefs(ctx, projectID, rec.KeyID, ""); err != nil {
+			return fmt.Errorf("admin: teardown %q: clear credential ref: %w", projectID, err)
+		}
 
 	case StepRevokeKey:
-		if rec.KeyID != "" {
-			if err := o.KMS.RevokeKey(ctx, rec.KeyID); err != nil {
-				return fmt.Errorf("admin: teardown %q: revoke key: %w", projectID, err)
-			}
+		if err := o.KMS.RevokeKey(ctx, rec.KeyID); err != nil {
+			return fmt.Errorf("admin: teardown %q: revoke key: %w", projectID, err)
+		}
+		if err := o.Registry.UpdateRefs(ctx, projectID, "", ""); err != nil {
+			return fmt.Errorf("admin: teardown %q: clear key ref: %w", projectID, err)
 		}
 
 	case StepDeleteBucket:
+		// Purge the local cache BEFORE destroying the bucket, not after.
+		//
+		// The daemon refuses to purge while writes are still queued, and that
+		// refusal has to stop the teardown while it can still do some good.
+		// Deleting the bucket first would leave those writes addressed to a
+		// destination that no longer exists — unsyncable, and lost whenever the
+		// cache is eventually cleared.
+		//
+		// Purging here rather than at deregister also closes the window where a
+		// project's memory sits in plaintext on local disk with nothing upstream
+		// left for it to be consistent with.
+		if o.Cache != nil {
+			if err := o.Cache.PurgeCache(ctx, projectID); err != nil {
+				return fmt.Errorf("admin: teardown %q: purge cache: %w", projectID, err)
+			}
+		} else {
+			fmt.Printf("  NOTE: no daemon configured, so %q's local cache was not purged.\n"+
+				"        Its memory remains on the daemon host until that file is removed.\n", projectID)
+		}
 		if err := o.Backend.DeleteBucket(ctx, projectID); err != nil {
 			return fmt.Errorf("admin: teardown %q: delete bucket: %w", projectID, err)
+		}
+		if err := o.Registry.ClearBucket(ctx, projectID); err != nil {
+			return fmt.Errorf("admin: teardown %q: clear bucket ref: %w", projectID, err)
 		}
 
 	case StepDeregister:
 		if err := o.Registry.UpdateStatus(ctx, projectID, registry.StatusDecommissioned); err != nil {
 			return fmt.Errorf("admin: teardown %q: mark decommissioned: %w", projectID, err)
+		}
+		// Drop any stored cache policy along with the record. Leaving it behind
+		// would mean a later project re-onboarded under the same ID silently
+		// inherits the previous tenant's retention settings — the same class of
+		// mistake as inheriting its cached memory, and just as invisible.
+		//
+		// Best-effort: a settings row that outlives its project is untidy, not
+		// dangerous, and must not block the teardown that removes the record.
+		if o.Settings != nil {
+			if err := o.Settings.DeleteSettings(ctx, projectID); err != nil {
+				fmt.Printf("  NOTE: could not remove %q's cache settings: %v\n"+
+					"        Delete the project_settings row by hand before reusing this project ID.\n",
+					projectID, err)
+			}
 		}
 		if err := o.Registry.Deregister(ctx, projectID); err != nil {
 			return fmt.Errorf("admin: teardown %q: deregister: %w", projectID, err)
@@ -118,29 +177,77 @@ func (o *Onboarder) Teardown(ctx context.Context, projectID string, step Teardow
 	return nil
 }
 
-// checkOrder enforces the step sequence using the record's status.
+// NextStep reports the teardown step a project is due for, or "" when it is
+// fully decommissioned. A deregistered project is gone from the registry, so
+// ErrNotFound also means complete.
 //
-// The registry tracks status, not per-step completion, so ordering is derived:
-// an "active" project may only take the first step; once "decommissioning", the
-// remaining steps run in order and are individually idempotent at the layer
-// below (revoking an absent credential or key is a no-op).
+// Callers use this to tell the operator what to run next based on real state
+// rather than on which step was last invoked.
+func NextStep(ctx context.Context, reg registry.TenantRegistry, projectID string) (TeardownStep, error) {
+	rec, err := reg.Get(ctx, projectID)
+	if errors.Is(err, registry.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("admin: next step %q: %w", projectID, err)
+	}
+	return nextStep(rec), nil
+}
+
+// nextStep returns the step a project is due for, or "" when teardown is
+// complete.
+//
+// Progress is derived from the record's own refs rather than tracked
+// separately: each step clears the ref it consumed, so a cleared ref *is* the
+// evidence that step ran. Nothing can drift out of sync with reality, and an
+// interrupted teardown resumes correctly because the remaining refs still
+// describe exactly what is left to destroy.
+//
+// Status alone cannot do this. It has three values for four steps, so steps 2-4
+// all sit in "decommissioning" and become indistinguishable — which previously
+// let deregister run while the bucket was still live, orphaning it.
+func nextStep(rec registry.ProjectRecord) TeardownStep {
+	switch {
+	case rec.Status == registry.StatusDecommissioned:
+		return ""
+	case rec.CredentialID != "":
+		return StepRevokeCredential
+	case rec.KeyID != "":
+		return StepRevokeKey
+	case rec.BucketName != "":
+		return StepDeleteBucket
+	default:
+		return StepDeregister
+	}
+}
+
+// checkOrder enforces the step sequence.
+//
+// Teardown is strictly ordered because later steps destroy what earlier ones
+// revoke access to, and because deregister erases the record that names the
+// bucket — running it early strands data that can no longer be found through
+// this CLI at all. So a step that isn't the next one due is refused, whether it
+// runs ahead of its predecessors or repeats work already done.
 func checkOrder(rec registry.ProjectRecord, step TeardownStep) error {
-	switch rec.Status {
-	case registry.StatusActive:
-		if step != StepRevokeCredential {
-			return fmt.Errorf("%w: project %q is still active; start with %q",
-				ErrOutOfOrder, rec.ProjectID, StepRevokeCredential)
-		}
-	case registry.StatusDecommissioning:
-		if step == StepRevokeCredential {
-			// Re-running the first step is harmless, but say so plainly rather
-			// than silently repeating a revoke.
-			return fmt.Errorf("%w: project %q is already decommissioning; %q was already run",
-				ErrOutOfOrder, rec.ProjectID, StepRevokeCredential)
-		}
-	case registry.StatusDecommissioned:
+	want := nextStep(rec)
+	if want == "" {
 		return fmt.Errorf("%w: project %q is already fully decommissioned",
 			ErrOutOfOrder, rec.ProjectID)
 	}
-	return nil
+	if step == want {
+		return nil
+	}
+
+	// Distinguish "already done" from "too early" — they need different fixes.
+	for _, done := range TeardownOrder {
+		if done == want {
+			break // reached the pending step without matching; must be ahead
+		}
+		if done == step {
+			return fmt.Errorf("%w: project %q has already completed %q; next is %q",
+				ErrOutOfOrder, rec.ProjectID, step, want)
+		}
+	}
+	return fmt.Errorf("%w: project %q is not ready for %q; next is %q",
+		ErrOutOfOrder, rec.ProjectID, step, want)
 }

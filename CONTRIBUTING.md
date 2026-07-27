@@ -44,12 +44,51 @@ gofmt -l .         # must print nothing; run `gofmt -w .` to fix
 Integration tests that need the local stack are guarded so `go test ./...` stays
 green without Docker; run them with the stack up per the spec's build sequence.
 
+## Branches
+
+```
+feature/*  →  main  (dev / integration)
+                ↓    release promotion, via PR
+              PRD   (production)
+```
+
+- **`main` is the dev branch** — day-to-day work merges here. Branch from it.
+- **`PRD` is production** — changes reach it only by promoting `main` through a
+  pull request, never by a direct push.
+
+A local hook enforces the `PRD` rule. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+That also enables the gitleaks pre-commit secret scan. The hook is a seatbelt,
+not a gate — it is client-side and bypassable with `--no-verify`. Server-side
+enforcement needs GitHub Team/Enterprise (branch protection is not enforced on
+private repos on the Free plan).
+
+## Secret scanning
+
+Three independent layers, because the first one silently did nothing for a
+while and nobody noticed:
+
+| Layer | Covers | Requires |
+|---|---|---|
+| `.githooks/pre-commit` | any local commit | `git config core.hooksPath .githooks` |
+| `.claude/settings.json` PreToolUse hook | commits made by Claude Code | nothing — ships with the repo |
+| CI (`.github/workflows/ci.yaml`) | every push and PR | nothing |
+
+CI is the backstop that always runs. The two commit-time hooks are a faster
+signal, not the only defense. **Never bypass a secret-scan failure with
+`--no-verify`** — remove the secret instead.
+
 ## Proposing a change
 
 1. **Open an issue first** for anything non-trivial (see the
    [issue templates](.github/ISSUE_TEMPLATE/)) so the approach can be discussed
    before you invest in it.
-2. Fork, branch from `main`, and keep the change focused on one increment.
+2. Fork, branch from `main` (the dev branch), and keep the change focused on one
+   increment.
 3. Make sure `go build`, `go vet`, `go test`, and `gofmt -l` are all clean.
 4. Use clear commit messages; [Conventional Commits](https://www.conventionalcommits.org/)
    (`feat:`, `fix:`, `docs:`, `chore:`) are preferred — they drive the changelog.
