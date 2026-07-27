@@ -143,7 +143,7 @@ type MemoryLister interface {
 // TokenMinter issues agent tokens. Narrow on purpose: the console mints and
 // lists, and teardown revokes, but nothing here needs to verify one.
 type TokenMinter interface {
-	MintToken(ctx context.Context, projectID, label, createdBy string) (string, error)
+	MintToken(ctx context.Context, projectID, label, createdBy string, readOnly bool) (string, error)
 	ListTokens(ctx context.Context, projectID string) ([]registry.AgentToken, error)
 	RevokeToken(ctx context.Context, hash string) error
 }

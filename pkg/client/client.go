@@ -53,3 +53,12 @@ var ErrNotFound = errors.New("client: not found")
 // ErrUnauthorized is returned when the token is missing, unknown, or not scoped
 // to the requested project.
 var ErrUnauthorized = errors.New("client: unauthorized")
+
+// ErrReadOnly is returned by Write when the token authenticates but grants only
+// read access.
+//
+// Distinct from ErrUnauthorized on purpose: the credential is valid, so a caller
+// that retries or re-authenticates is wasting its time. This is the error that
+// tells an agent the memory it is holding is reference material it may not
+// change.
+var ErrReadOnly = errors.New("client: token is read-only")

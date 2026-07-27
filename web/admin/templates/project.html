@@ -78,7 +78,15 @@
         <input type="text" name="label" placeholder="laptop, ci, teammate-name" autocomplete="off">
         <button class="btn btn-primary" type="submit">Mint token</button>
       </div>
-      <p class="help">One per machine or job, so a single leak is revoked without disturbing the rest.</p>
+      <label style="display:flex; gap:6px; align-items:center; margin-top:10px">
+        <input type="checkbox" name="read_only" value="1">
+        <span class="fs-sm">Read-only — this token can recall memory but never write it</span>
+      </label>
+      <p class="help">
+        One per machine or job, so a single leak is revoked without disturbing the rest.
+        Choose read-only for an agent that handles untrusted input: a prompt injection
+        cannot then plant content that later sessions read back as trusted memory.
+      </p>
     </form>
   </div>
   {{end}}
@@ -98,6 +106,7 @@
           <tr>
             <th>Label</th>
             <th>Token</th>
+            <th>Access</th>
             <th>Created</th>
             <th>Last used</th>
             <th>Status</th>
@@ -109,6 +118,16 @@
           <tr>
             <td>{{if .Label}}{{.Label}}{{else}}<span class="subtle">—</span>{{end}}</td>
             <td><code class="id">{{.Display}}…</code></td>
+            <td>
+              {{/* Stated on every row rather than only on read-only ones: an
+                   operator auditing which tokens can write should not have to
+                   read absence as meaning. */}}
+              {{if .ReadOnly}}
+                <span class="badge">read-only</span>
+              {{else}}
+                <span class="badge warn">read-write</span>
+              {{end}}
+            </td>
             <td class="fs-sm muted">
               {{.CreatedAt}}
               {{if .CreatedBy}}<div class="subtle">by {{.CreatedBy}}</div>{{end}}

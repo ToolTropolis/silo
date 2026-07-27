@@ -200,6 +200,15 @@ func (s *Server) handleWrite(ctx context.Context, _ *mcp.CallToolRequest, in Wri
 	}
 
 	if err := s.memory.WriteAs(ctx, path, []byte(in.Content), in.Actor); err != nil {
+		if errors.Is(err, client.ErrReadOnly) {
+			// Say plainly that retrying cannot work. An agent told only "write
+			// failed" will try again, and again, for the rest of the session.
+			return errorResult(fmt.Sprintf(
+				"This session has read-only access to project %q, so %q was not stored. "+
+					"You can recall memory but not change it. Do not retry — ask the "+
+					"operator for a read-write token if this needs to persist.",
+				s.project, path)), WriteOutput{}, nil
+		}
 		return errorResult(fmt.Sprintf("write %q: %v", path, err)), WriteOutput{}, nil
 	}
 	return &mcp.CallToolResult{

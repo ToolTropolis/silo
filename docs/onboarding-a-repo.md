@@ -229,6 +229,22 @@ cannot be retrieved afterwards. Lost it? Mint another and revoke the old one.
 Give each machine or CI job its own labelled token, so a single leak is revoked
 without disturbing anything else.
 
+### Read-only tokens
+
+A token can be minted **read-only** — tick the box on the project page. It reads,
+lists, and searches; a write is refused with `403` and `token is read-only`,
+enforced in the daemon rather than asked of the agent.
+
+Use one wherever an agent handles input you don't control. A prompt injection can
+make an agent *try* to write, and content planted in memory is read back as
+trusted fact by every later session; a read-only token makes that impossible
+rather than merely discouraged. Reference material an agent should consult but
+never edit is the other natural fit.
+
+The wizard's **Connect** step always mints read-write, since a repo's own agents
+need to record what they learn. Mint read-only deliberately from the project
+page, where the token list shows every token's access alongside its label.
+
 A daemon started with `--rqlite` verifies these without a restart:
 
 ```bash
@@ -307,5 +323,6 @@ one-step-per-invocation rule.
 | `Vault is sealed` / `connection refused` on 8201 | Re-run `deploy/bootstrap-dev.sh`; Vault seals on restart. |
 | `leader not found` from rqlite | Cluster still forming — wait ~15s after `up`. If it persists, check all three `rqlite` containers are running. |
 | SDK returns `ErrUnauthorized` | Token isn't in the daemon's `--tokens` map. |
+| SDK returns `ErrReadOnly` / daemon returns `403 token is read-only` | The token was minted read-only. It is valid — retrying will not help. Mint a read-write token if the write needs to persist. |
 | SDK returns `ErrNotFound` for a path you wrote | Writing under a different project's token — tokens are scoped to one project. |
 | Distilator: `is a credential configured?` | Run `ant auth login`, then `ant auth status` to confirm the active source. |

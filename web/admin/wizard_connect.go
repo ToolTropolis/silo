@@ -138,7 +138,10 @@ func (s *Server) wizardMint(w http.ResponseWriter, r *http.Request) {
 		label = "agent"
 	}
 
-	raw, err := s.tokens.MintToken(r.Context(), projectID, label, actorFrom(r))
+	// Read-write: this is the token the repo's agents use to record what they
+	// learn, so onboarding would be pointless if it could not write. A read-only
+	// token is minted deliberately from the project page instead.
+	raw, err := s.tokens.MintToken(r.Context(), projectID, label, actorFrom(r), false)
 	if err != nil {
 		redirectErr(w, r, "/onboard/connect?project="+urlEscape(projectID), err.Error())
 		return

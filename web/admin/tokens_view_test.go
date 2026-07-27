@@ -238,3 +238,51 @@ func TestProjectsList_LinksToTheProjectPage(t *testing.T) {
 		t.Error("the projects list should link to each project's page")
 	}
 }
+
+// The console must be able to mint both kinds. A checkbox that silently minted
+// a read-write token would be worse than not offering the option: the operator
+// would believe an agent was constrained when it was not.
+func TestMintToken_ReadOnlyCheckboxReachesTheStore(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		form     url.Values
+		wantOnly bool
+	}{
+		{"checkbox ticked", url.Values{
+			"project": {"proj-11"}, "label": {"reader"}, "read_only": {"1"},
+		}, true},
+		{"checkbox absent", url.Values{
+			"project": {"proj-11"}, "label": {"writer"},
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			minter := &fakeMinter{}
+			ts := projectFixture(t, minter)
+
+			postForm(t, ts, "/tokens/mint", tc.form)
+
+			if minter.lastReadOnly != tc.wantOnly {
+				t.Errorf("minted with readOnly=%v, want %v", minter.lastReadOnly, tc.wantOnly)
+			}
+		})
+	}
+}
+
+// The operator has to be able to see which tokens can write. Showing the badge
+// only on read-only rows would make "no badge" carry the meaning, which is
+// exactly the ambiguity an audit cannot afford.
+func TestProjectPage_ShowsTokenAccessScope(t *testing.T) {
+	minter := &fakeMinter{tokens: []registry.AgentToken{
+		{Hash: "aaaaaaaaaaaabbbb", ProjectID: "proj-11", Label: "reader", ReadOnly: true},
+		{Hash: "ccccccccccccdddd", ProjectID: "proj-11", Label: "writer"},
+	}}
+	ts := projectFixture(t, minter)
+
+	body := getBody(t, ts, "/project?project=proj-11")
+	if !strings.Contains(body, "read-only") {
+		t.Error("the read-only token is not marked as such")
+	}
+	if !strings.Contains(body, "read-write") {
+		t.Error("the read-write token is not marked as such")
+	}
+}

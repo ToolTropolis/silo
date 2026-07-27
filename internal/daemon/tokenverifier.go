@@ -11,7 +11,7 @@ import (
 
 // TokenResolver is the slice of registry.TokenStore the verifier needs.
 type TokenResolver interface {
-	VerifyToken(ctx context.Context, rawToken string) (string, error)
+	VerifyToken(ctx context.Context, rawToken string) (registry.TokenGrant, error)
 	TouchToken(ctx context.Context, hash string) error
 }
 
@@ -50,9 +50,9 @@ type RegistryTokenVerifier struct {
 }
 
 type tokenEntry struct {
-	projectID string
-	ok        bool
-	expires   time.Time
+	grant   Grant
+	ok      bool
+	expires time.Time
 }
 
 var _ TokenVerifier = (*RegistryTokenVerifier)(nil)
@@ -77,28 +77,28 @@ func NewRegistryTokenVerifier(store TokenResolver, static StaticTokenVerifier, t
 }
 
 // ProjectFor implements TokenVerifier.
-func (v *RegistryTokenVerifier) ProjectFor(token string) (string, error) {
+func (v *RegistryTokenVerifier) ProjectFor(token string) (Grant, error) {
 	if token == "" {
-		return "", ErrUnauthorized
+		return Grant{}, ErrUnauthorized
 	}
 
 	// Static tokens first: they are in-memory, and a daemon configured with
 	// --tokens should not need a reachable registry to serve them.
 	if v.static != nil {
-		if projectID, err := v.static.ProjectFor(token); err == nil {
-			return projectID, nil
+		if grant, err := v.static.ProjectFor(token); err == nil {
+			return grant, nil
 		}
 	}
 	if v.store == nil {
-		return "", ErrUnauthorized
+		return Grant{}, ErrUnauthorized
 	}
 
 	if e, ok := v.lookup(token); ok {
 		if !e.ok {
-			return "", ErrUnauthorized
+			return Grant{}, ErrUnauthorized
 		}
 		v.scheduleTouch(token)
-		return e.projectID, nil
+		return e.grant, nil
 	}
 
 	// Bounded: an unreachable registry must fail the request rather than hang
@@ -106,21 +106,25 @@ func (v *RegistryTokenVerifier) ProjectFor(token string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	projectID, err := v.store.VerifyToken(ctx, token)
+	tg, err := v.store.VerifyToken(ctx, token)
 	if errors.Is(err, registry.ErrNotFound) {
 		v.store_(token, tokenEntry{ok: false, expires: v.now().Add(v.ttl)})
-		return "", ErrUnauthorized
+		return Grant{}, ErrUnauthorized
 	}
 	if err != nil {
 		// A registry failure is not an authorization decision. Do NOT cache it:
 		// caching a transient error as a negative result would lock every agent
 		// out for the TTL after a blip.
-		return "", err
+		return Grant{}, err
 	}
 
-	v.store_(token, tokenEntry{projectID: projectID, ok: true, expires: v.now().Add(v.ttl)})
+	// The scope is cached with the project. Caching only the project and
+	// re-deriving the scope elsewhere would mean a read-only token authorized
+	// from cache as read-write for the rest of the TTL.
+	grant := Grant{ProjectID: tg.ProjectID, ReadOnly: tg.ReadOnly}
+	v.store_(token, tokenEntry{grant: grant, ok: true, expires: v.now().Add(v.ttl)})
 	v.scheduleTouch(token)
-	return projectID, nil
+	return grant, nil
 }
 
 func (v *RegistryTokenVerifier) lookup(token string) (tokenEntry, bool) {

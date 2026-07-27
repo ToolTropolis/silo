@@ -20,6 +20,10 @@ type tokenRow struct {
 	LastUsed  string
 	Revoked   bool
 	RevokedAt string
+	// ReadOnly is rendered on every row, not only read-only ones: an operator
+	// auditing which tokens can write should not have to read absence as
+	// meaning.
+	ReadOnly bool
 }
 
 // handleProject renders one project: its tokens, its cache, and its lifecycle.
@@ -203,7 +207,11 @@ func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 		label = "agent"
 	}
 
-	raw, err := s.tokens.MintToken(r.Context(), projectID, label, actorFrom(r))
+	// Absent checkbox means read-write, matching the form's default and the
+	// behaviour every existing token already has.
+	readOnly := r.FormValue("read_only") != ""
+
+	raw, err := s.tokens.MintToken(r.Context(), projectID, label, actorFrom(r), readOnly)
 	if err != nil {
 		redirectErr(w, r, back, err.Error())
 		return

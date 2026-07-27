@@ -26,6 +26,13 @@ type AgentToken struct {
 	CreatedBy  string
 	LastUsedAt string
 	RevokedAt  string
+	// ReadOnly means the daemon refuses writes presented with this token.
+	//
+	// The case it exists for: an agent that processes untrusted input can be
+	// prompt-injected into writing malicious content, which later sessions then
+	// read back as trusted memory. A read-only token makes that physically
+	// impossible rather than merely discouraged.
+	ReadOnly bool
 }
 
 // Revoked reports whether the token has been revoked.
@@ -40,6 +47,25 @@ func (t AgentToken) Display() string {
 	return t.Hash[:12]
 }
 
+// TokenGrant is what a verified token authorizes: one project, at one scope.
+//
+// A struct rather than a bare projectID so the scope cannot be dropped on the
+// way from authentication to authorization. The zero value grants nothing —
+// an empty ProjectID is not a valid project — so a caller that forgets to check
+// an error still fails closed rather than authorizing against "".
+type TokenGrant struct {
+	ProjectID string
+	// ReadOnly means writes must be refused. Named for the restriction rather
+	// than the permission (ReadWrite) so that the zero value is the restrictive
+	// one only when paired with an empty ProjectID — and so that adding a scope
+	// later cannot silently widen an existing grant.
+	ReadOnly bool
+	// Hash identifies the token that produced this grant, for TouchToken and
+	// for attributing a write. Never the raw token: this struct is passed
+	// around and logged.
+	Hash string
+}
+
 // TokenStore issues and verifies the bearer tokens that scope an agent to one
 // project.
 //
@@ -51,10 +77,19 @@ func (t AgentToken) Display() string {
 type TokenStore interface {
 	// MintToken creates a token for a project and returns the raw token ONCE.
 	// It is never retrievable again: only a hash is stored.
-	MintToken(ctx context.Context, projectID, label, createdBy string) (rawToken string, err error)
-	// VerifyToken resolves a raw token to its project, or ErrNotFound when the
-	// token is unknown or revoked.
-	VerifyToken(ctx context.Context, rawToken string) (projectID string, err error)
+	//
+	// readOnly mints a token the daemon refuses writes on. It is a parameter
+	// rather than a separate MintReadOnlyToken so that every caller has to state
+	// which kind it wants — a defaulted scope is how a read-only token quietly
+	// becomes read-write.
+	MintToken(ctx context.Context, projectID, label, createdBy string, readOnly bool) (rawToken string, err error)
+	// VerifyToken resolves a raw token to the access it grants, or ErrNotFound
+	// when the token is unknown or revoked.
+	//
+	// Returns the scope alongside the project deliberately: a caller that has
+	// authenticated a token holds everything needed to authorize it, with no
+	// second lookup to forget.
+	VerifyToken(ctx context.Context, rawToken string) (TokenGrant, error)
 	// ListTokens returns a project's tokens (metadata only, no secrets).
 	ListTokens(ctx context.Context, projectID string) ([]AgentToken, error)
 	// RevokeToken marks a token dead by its hash. Revoking an already-revoked

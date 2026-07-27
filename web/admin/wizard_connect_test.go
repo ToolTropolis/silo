@@ -22,14 +22,18 @@ type fakeMinter struct {
 	err     error
 	tokens  []registry.AgentToken
 	revoked []string
+	// lastReadOnly records the scope the console asked for, so a test can
+	// assert that a read-only mint actually reaches the store.
+	lastReadOnly bool
 }
 
-func (f *fakeMinter) MintToken(_ context.Context, projectID, label, _ string) (string, error) {
+func (f *fakeMinter) MintToken(_ context.Context, projectID, label, _ string, readOnly bool) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return "", f.err
 	}
+	f.lastReadOnly = readOnly
 	f.minted = append(f.minted, projectID+":"+label)
 	if f.next == "" {
 		f.next = "silo_pat_TESTTOKEN"

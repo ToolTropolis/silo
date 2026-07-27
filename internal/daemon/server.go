@@ -11,29 +11,56 @@ import (
 	"strings"
 )
 
-// TokenVerifier maps a bearer token presented by an agent to the projectID it
-// is scoped to. It's the daemon's authorization boundary: a token resolves to
-// exactly one project, so an agent can never address another project's memory
+// Grant is the access a verified token authorizes: one project, at one scope.
+//
+// The zero value grants nothing, since an empty ProjectID is not a valid
+// project. That matters because it makes the failure mode of a dropped error
+// a denial rather than an authorization against "".
+type Grant struct {
+	ProjectID string
+	// ReadOnly means writes must be refused for this token.
+	ReadOnly bool
+}
+
+// TokenVerifier maps a bearer token presented by an agent to the access it
+// grants. It's the daemon's authorization boundary: a token resolves to exactly
+// one project, so an agent can never address another project's memory
 // regardless of what it puts in the request.
 type TokenVerifier interface {
-	// ProjectFor returns the projectID a token is scoped to, or ErrUnauthorized.
-	ProjectFor(token string) (string, error)
+	// ProjectFor returns the access a token grants, or ErrUnauthorized.
+	//
+	// Returns scope alongside the project rather than exposing a second
+	// ScopeFor method: a separate lookup is one a handler can forget, and
+	// forgetting it would silently grant write access to a read-only token.
+	// Carrying both means a handler that ignores the scope is a visible
+	// omission at the call site.
+	ProjectFor(token string) (Grant, error)
 }
 
 // ErrUnauthorized is returned by a TokenVerifier for an unknown token.
 var ErrUnauthorized = errors.New("daemon: unauthorized")
 
+// ErrReadOnlyToken is returned when a write is attempted with a read-only
+// token. Distinct from ErrUnauthorized because the token IS valid — the
+// operation is not permitted — and an agent that cannot tell those apart will
+// retry a write that can never succeed.
+var ErrReadOnlyToken = errors.New("daemon: token is read-only")
+
 // StaticTokenVerifier is a simple in-memory token->project map, suitable for
 // local/dev use and tests. Production wiring resolves tokens against the
 // credential store issued at onboarding.
+//
+// Every static token is read-write. --tokens is a dev convenience with no way
+// to express a scope, and inventing a syntax for it would put an authorization
+// decision in a flag string; mint a read-only token from the registry instead.
 type StaticTokenVerifier map[string]string
 
 // ProjectFor implements TokenVerifier.
-func (s StaticTokenVerifier) ProjectFor(token string) (string, error) {
+func (s StaticTokenVerifier) ProjectFor(token string) (Grant, error) {
 	if p, ok := s[token]; ok && token != "" {
-		return p, nil
+		return Grant{ProjectID: p}, nil
 	}
-	return "", ErrUnauthorized
+	return Grant{}, ErrUnauthorized
 }
 
 // Projects returns the distinct projects this verifier grants access to, sorted.
@@ -107,7 +134,7 @@ type syncResponse struct {
 // before a shutdown or a teardown, where the question is whether it is safe to
 // destroy something. Scoped to the token's project like every other route.
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.authorize(r)
+	grant, err := s.authorize(r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
@@ -117,21 +144,21 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	before, err := s.daemon.QueueDepth(r.Context(), projectID)
+	before, err := s.daemon.QueueDepth(r.Context(), grant.ProjectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	syncErr := s.daemon.SyncProject(r.Context(), projectID)
+	syncErr := s.daemon.SyncProject(r.Context(), grant.ProjectID)
 
-	after, err := s.daemon.QueueDepth(r.Context(), projectID)
+	after, err := s.daemon.QueueDepth(r.Context(), grant.ProjectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	resp := syncResponse{Project: projectID, Drained: before - after, Remaining: after}
+	resp := syncResponse{Project: grant.ProjectID, Drained: before - after, Remaining: after}
 	if syncErr != nil {
 		// Still 200: the counts are the answer, and a caller deciding whether
 		// it is safe to tear down needs the numbers more than a status code.
@@ -156,21 +183,21 @@ type queueResponse struct {
 // Fleet-wide queue state is an operator question and deliberately does not live
 // behind an agent's token.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.authorize(r)
+	grant, err := s.authorize(r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
-	depth, err := s.daemon.QueueDepth(r.Context(), projectID)
+	depth, err := s.daemon.QueueDepth(r.Context(), grant.ProjectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	resp := queueResponse{Project: projectID, Pending: depth}
+	resp := queueResponse{Project: grant.ProjectID, Pending: depth}
 	if depth > 0 {
 		// Best-effort: the depth is the answer, and an unreadable timestamp
 		// shouldn't fail the request.
-		if oldest, err := s.daemon.OldestQueued(r.Context(), projectID); err == nil {
+		if oldest, err := s.daemon.OldestQueued(r.Context(), grant.ProjectID); err == nil {
 			resp.OldestQueuedAt = oldest
 		}
 	}
@@ -250,14 +277,35 @@ func (s *Server) ListenAndServe(addr string) error {
 	return s.Serve(ln)
 }
 
-// authorize resolves the request's bearer token to its project scope.
-func (s *Server) authorize(r *http.Request) (string, error) {
+// authorize resolves the request's bearer token to the access it grants.
+//
+// Returns a Grant rather than a projectID so a handler holds the scope it needs
+// to authorize the operation, with no second lookup to forget. Read handlers
+// use only grant.ProjectID; write handlers must also call authorizeWrite.
+func (s *Server) authorize(r *http.Request) (Grant, error) {
 	auth := r.Header.Get("Authorization")
 	token := strings.TrimPrefix(auth, "Bearer ")
 	if token == auth || token == "" { // missing or malformed
-		return "", ErrUnauthorized
+		return Grant{}, ErrUnauthorized
 	}
 	return s.verifier.ProjectFor(token)
+}
+
+// authorizeWrite resolves the token and additionally refuses a read-only one.
+//
+// Separate from authorize rather than a boolean parameter so that the write
+// path reads as a distinct decision at the call site: a handler that mutates
+// memory calls a differently-named function, and one that forgets is visible in
+// review rather than hidden behind an argument.
+func (s *Server) authorizeWrite(r *http.Request) (Grant, error) {
+	grant, err := s.authorize(r)
+	if err != nil {
+		return Grant{}, err
+	}
+	if grant.ReadOnly {
+		return Grant{}, ErrReadOnlyToken
+	}
+	return grant, nil
 }
 
 type writeRequest struct {
@@ -291,7 +339,7 @@ type searchResponse struct {
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.authorize(r)
+	grant, err := s.authorize(r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
@@ -301,7 +349,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("path required"))
 		return
 	}
-	content, err := s.daemon.Read(r.Context(), projectID, path)
+	content, err := s.daemon.Read(r.Context(), grant.ProjectID, path)
 	if errors.Is(err, ErrNotFound) {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -314,8 +362,18 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.authorize(r)
+	// authorizeWrite, not authorize: this is the only route that puts new
+	// content into a project's memory, so it is the one a read-only token must
+	// not reach.
+	grant, err := s.authorizeWrite(r)
 	if err != nil {
+		if errors.Is(err, ErrReadOnlyToken) {
+			// 403, not 401: the token authenticated fine. A 401 invites the
+			// client to re-authenticate, which cannot help — no retry with this
+			// credential will ever succeed.
+			writeErr(w, http.StatusForbidden, err)
+			return
+		}
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
@@ -337,7 +395,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		actor = s.actor
 	}
 	content := req.Content
-	outcome, err := s.daemon.SafeWrite(r.Context(), projectID, req.Path,
+	outcome, err := s.daemon.SafeWrite(r.Context(), grant.ProjectID, req.Path,
 		func([]byte) []byte { return content }, actor, req.SessionID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -358,12 +416,12 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.authorize(r)
+	grant, err := s.authorize(r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
-	paths, err := s.daemon.List(r.Context(), projectID, r.URL.Query().Get("prefix"))
+	paths, err := s.daemon.List(r.Context(), grant.ProjectID, r.URL.Query().Get("prefix"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -375,7 +433,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.authorize(r)
+	grant, err := s.authorize(r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
@@ -385,7 +443,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("q required"))
 		return
 	}
-	hits, err := s.daemon.Search(r.Context(), projectID, r.URL.Query().Get("prefix"), q)
+	hits, err := s.daemon.Search(r.Context(), grant.ProjectID, r.URL.Query().Get("prefix"), q)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

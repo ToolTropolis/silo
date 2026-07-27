@@ -143,6 +143,11 @@ func decodeError(resp *http.Response) error {
 		return ErrNotFound
 	case http.StatusUnauthorized:
 		return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
+	case http.StatusForbidden:
+		// The token authenticated; the operation is not permitted. Mapping this
+		// to ErrUnauthorized would tell a caller to re-authenticate, which can
+		// never resolve it.
+		return fmt.Errorf("%w: %s", ErrReadOnly, msg)
 	default:
 		return fmt.Errorf("client: daemon error (%d): %s", resp.StatusCode, msg)
 	}

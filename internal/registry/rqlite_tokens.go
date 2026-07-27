@@ -12,9 +12,9 @@ import (
 
 var _ TokenStore = (*Rqlite)(nil)
 
-const tokenColumns = `token_hash, project_id, label, created_at, created_by, last_used_at, revoked_at`
+const tokenColumns = `token_hash, project_id, label, created_at, created_by, last_used_at, revoked_at, read_only`
 
-func (r *Rqlite) MintToken(ctx context.Context, projectID, label, createdBy string) (string, error) {
+func (r *Rqlite) MintToken(ctx context.Context, projectID, label, createdBy string, readOnly bool) (string, error) {
 	// Validate before minting: a token for a malformed project ID would be a
 	// credential that can never authorize anything, which is worse than an error.
 	if err := project.ValidateID(projectID); err != nil {
@@ -27,11 +27,11 @@ func (r *Rqlite) MintToken(ctx context.Context, projectID, label, createdBy stri
 	}
 
 	_, err = r.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
-		Query: `INSERT INTO agent_tokens (token_hash, project_id, label, created_at, created_by)
-			VALUES (?, ?, ?, ?, ?)`,
+		Query: `INSERT INTO agent_tokens (token_hash, project_id, label, created_at, created_by, read_only)
+			VALUES (?, ?, ?, ?, ?, ?)`,
 		Arguments: []interface{}{
 			HashToken(raw), projectID, label,
-			time.Now().UTC().Format(time.RFC3339), createdBy,
+			time.Now().UTC().Format(time.RFC3339), createdBy, boolToInt(readOnly),
 		},
 	})
 	if err != nil {
@@ -42,39 +42,79 @@ func (r *Rqlite) MintToken(ctx context.Context, projectID, label, createdBy stri
 	return raw, nil
 }
 
-func (r *Rqlite) VerifyToken(ctx context.Context, rawToken string) (string, error) {
+func (r *Rqlite) VerifyToken(ctx context.Context, rawToken string) (TokenGrant, error) {
 	if rawToken == "" {
-		return "", ErrNotFound
+		return TokenGrant{}, ErrNotFound
 	}
+	hash := HashToken(rawToken)
 	// Look up by hash rather than scanning: the presented token is hashed and
 	// matched directly, so the query cost does not grow with the token count
 	// and no comparison against stored material is ever needed.
 	rows, err := r.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
-		Query:     `SELECT project_id, revoked_at FROM agent_tokens WHERE token_hash = ?`,
-		Arguments: []interface{}{HashToken(rawToken)},
+		Query:     `SELECT project_id, revoked_at, read_only FROM agent_tokens WHERE token_hash = ?`,
+		Arguments: []interface{}{hash},
 	})
 	if err != nil {
-		return "", fmt.Errorf("registry: verify token: %w", err)
+		return TokenGrant{}, fmt.Errorf("registry: verify token: %w", err)
 	}
 	if !rows.Next() {
-		return "", ErrNotFound
+		return TokenGrant{}, ErrNotFound
 	}
 
 	m, err := rows.Map()
 	if err != nil {
-		return "", fmt.Errorf("registry: verify token: %w", err)
+		return TokenGrant{}, fmt.Errorf("registry: verify token: %w", err)
 	}
 	// A revoked token must be indistinguishable from an unknown one to the
 	// caller: both mean "not authorized", and saying which would confirm to an
 	// attacker that a token was once valid.
 	if revoked, _ := m["revoked_at"].(string); revoked != "" {
-		return "", ErrNotFound
+		return TokenGrant{}, ErrNotFound
 	}
 	projectID, _ := m["project_id"].(string)
 	if projectID == "" {
-		return "", ErrNotFound
+		return TokenGrant{}, ErrNotFound
 	}
-	return projectID, nil
+	return TokenGrant{ProjectID: projectID, ReadOnly: readsOnly(m["read_only"]), Hash: hash}, nil
+}
+
+// readsOnly interprets the read_only column.
+//
+// Defensive about the concrete type because rqlite returns JSON numbers, and a
+// driver or schema change that started yielding a bool or a string must not
+// silently widen a read-only token into a writable one. An unrecognized type is
+// treated as read-only: wrongly refusing a write is a clear error the operator
+// can act on, while wrongly allowing one is the hole this closes.
+//
+// NULL is the one exception and is read-WRITE, because it has a specific
+// meaning rather than being unrecognized: 009 backfills every existing row to
+// 0, so a NULL can only be a row written before the column existed — and that
+// token was read-write when it was issued. Refusing its writes would break
+// working agents on upgrade.
+func readsOnly(v any) bool {
+	switch n := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return n
+	case float64:
+		return n != 0
+	case int64:
+		return n != 0
+	case int:
+		return n != 0
+	case string:
+		return n != "" && n != "0" && n != "false"
+	default:
+		return true
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (r *Rqlite) ListTokens(ctx context.Context, projectID string) ([]AgentToken, error) {
@@ -143,5 +183,6 @@ func scanToken(rows gorqlite.QueryResult) (AgentToken, error) {
 	t.CreatedBy, _ = m["created_by"].(string)
 	t.LastUsedAt, _ = m["last_used_at"].(string)
 	t.RevokedAt, _ = m["revoked_at"].(string)
+	t.ReadOnly = readsOnly(m["read_only"])
 	return t, nil
 }

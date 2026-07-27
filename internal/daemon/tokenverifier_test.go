@@ -12,32 +12,33 @@ import (
 
 // fakeTokenStore counts lookups so caching behaviour is observable.
 type fakeTokenStore struct {
-	mu      sync.Mutex
-	tokens  map[string]string // raw token -> projectID
-	err     error
-	lookups int
-	touched []string
+	mu       sync.Mutex
+	tokens   map[string]string // raw token -> projectID
+	readOnly map[string]bool   // raw token -> read-only scope
+	err      error
+	lookups  int
+	touched  []string
 }
 
 func newFakeTokenStore(tokens map[string]string) *fakeTokenStore {
 	if tokens == nil {
 		tokens = map[string]string{}
 	}
-	return &fakeTokenStore{tokens: tokens}
+	return &fakeTokenStore{tokens: tokens, readOnly: map[string]bool{}}
 }
 
-func (f *fakeTokenStore) VerifyToken(_ context.Context, raw string) (string, error) {
+func (f *fakeTokenStore) VerifyToken(_ context.Context, raw string) (registry.TokenGrant, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lookups++
 	if f.err != nil {
-		return "", f.err
+		return registry.TokenGrant{}, f.err
 	}
 	p, ok := f.tokens[raw]
 	if !ok {
-		return "", registry.ErrNotFound
+		return registry.TokenGrant{}, registry.ErrNotFound
 	}
-	return p, nil
+	return registry.TokenGrant{ProjectID: p, ReadOnly: f.readOnly[raw]}, nil
 }
 
 func (f *fakeTokenStore) TouchToken(_ context.Context, hash string) error {
@@ -73,8 +74,8 @@ func TestRegistryVerifier_ResolvesAToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectFor: %v", err)
 	}
-	if got != "proj-a" {
-		t.Errorf("resolved to %q, want proj-a", got)
+	if got.ProjectID != "proj-a" {
+		t.Errorf("resolved to %q, want proj-a", got.ProjectID)
 	}
 }
 
@@ -140,8 +141,8 @@ func TestRegistryVerifier_DoesNotCacheRegistryFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("after recovery: %v", err)
 	}
-	if got != "proj-a" {
-		t.Errorf("resolved to %q, want proj-a", got)
+	if got.ProjectID != "proj-a" {
+		t.Errorf("resolved to %q, want proj-a", got.ProjectID)
 	}
 }
 
@@ -200,8 +201,8 @@ func TestRegistryVerifier_StaticTokensStillWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a static token should resolve without the registry: %v", err)
 	}
-	if got != "proj-dev" {
-		t.Errorf("resolved to %q, want proj-dev", got)
+	if got.ProjectID != "proj-dev" {
+		t.Errorf("resolved to %q, want proj-dev", got.ProjectID)
 	}
 	if store.count() != 0 {
 		t.Error("a static token should not hit the registry at all")
@@ -214,11 +215,11 @@ func TestRegistryVerifier_StaticAndRegistryCoexist(t *testing.T) {
 	static := StaticTokenVerifier{"dev-token": "proj-dev"}
 	v := NewRegistryTokenVerifier(store, static, time.Minute)
 
-	if got, _ := v.ProjectFor("dev-token"); got != "proj-dev" {
-		t.Errorf("static token resolved to %q", got)
+	if got, _ := v.ProjectFor("dev-token"); got.ProjectID != "proj-dev" {
+		t.Errorf("static token resolved to %q", got.ProjectID)
 	}
-	if got, _ := v.ProjectFor("minted"); got != "proj-minted" {
-		t.Errorf("minted token resolved to %q", got)
+	if got, _ := v.ProjectFor("minted"); got.ProjectID != "proj-minted" {
+		t.Errorf("minted token resolved to %q", got.ProjectID)
 	}
 }
 
@@ -232,10 +233,10 @@ func TestRegistryVerifier_TokensAreProjectScoped(t *testing.T) {
 
 	a, _ := v.ProjectFor("tok-a")
 	b, _ := v.ProjectFor("tok-b")
-	if a != "proj-a" || b != "proj-b" {
-		t.Fatalf("ISOLATION FAILURE: tok-a=%q tok-b=%q", a, b)
+	if a.ProjectID != "proj-a" || b.ProjectID != "proj-b" {
+		t.Fatalf("ISOLATION FAILURE: tok-a=%q tok-b=%q", a.ProjectID, b.ProjectID)
 	}
-	if a == b {
+	if a.ProjectID == b.ProjectID {
 		t.Fatal("ISOLATION FAILURE: two tokens resolved to the same project")
 	}
 }
