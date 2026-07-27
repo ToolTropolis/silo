@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,5 +124,33 @@ func TestIsSocketPath(t *testing.T) {
 		if isSocketPath(s) {
 			t.Errorf("isSocketPath(%q) = true, want false", s)
 		}
+	}
+}
+
+// A bare command name in .mcp.json forces the agent to have silo-mcp on its
+// PATH, which an agent launched from a GUI or another shell usually does not.
+func TestResolveMCPBinary_FindsItOnPATH(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "silo-mcp")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	got := resolveMCPBinary()
+	if !filepath.IsAbs(got) {
+		t.Errorf("resolveMCPBinary() = %q, want an absolute path", got)
+	}
+	if got != bin {
+		t.Errorf("resolveMCPBinary() = %q, want %q", got, bin)
+	}
+}
+
+// Not found: still emit a usable file rather than failing, and warn.
+func TestResolveMCPBinary_FallsBackToBareName(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	if got := resolveMCPBinary(); got != "silo-mcp" {
+		t.Errorf("resolveMCPBinary() = %q, want the bare name as a fallback", got)
 	}
 }

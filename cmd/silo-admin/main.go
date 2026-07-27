@@ -18,6 +18,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -60,10 +62,18 @@ func run(args []string) error {
 	weedMaster := fs.String("weed-master", "localhost:9333", "SeaweedFS master address")
 	agentDaemon := fs.String("agent-daemon", "http://127.0.0.1:8500",
 		"the daemon address written into a repo's .mcp.json — the address an AGENT reaches, which is not --daemon (this console's admin socket)")
-	mcpBinary := fs.String("mcp-binary", "silo-mcp",
-		"the command name written into .mcp.json; use an absolute path if silo-mcp is not on the agent's PATH")
+	mcpBinary := fs.String("mcp-binary", "",
+		"the command written into .mcp.json (default: silo-mcp resolved to an absolute path, else the bare name)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// Resolve to an absolute path so the agent does not need silo-mcp on its
+	// PATH. An agent launched from a GUI or a different shell rarely inherits
+	// the PATH the operator installed into, and a bare name fails there with a
+	// spawn error that says nothing about PATH.
+	if *mcpBinary == "" {
+		*mcpBinary = resolveMCPBinary()
 	}
 
 	if err := checkListenSafety(*listen, *token, *allowRemote); err != nil {
@@ -269,4 +279,34 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// resolveMCPBinary finds silo-mcp and returns an absolute path, or the bare
+// name when it cannot be found.
+//
+// Written into .mcp.json, so an agent launched from a GUI or another shell —
+// which rarely inherits the operator's PATH — still starts it. Prefers a copy
+// beside this binary, since the two ship together.
+func resolveMCPBinary() string {
+	const name = "silo-mcp"
+
+	if self, err := os.Executable(); err == nil {
+		beside := filepath.Join(filepath.Dir(self), name)
+		if info, err := os.Stat(beside); err == nil && !info.IsDir() {
+			return beside
+		}
+	}
+	if path, err := exec.LookPath(name); err == nil {
+		if abs, err := filepath.Abs(path); err == nil {
+			return abs
+		}
+		return path
+	}
+	// Not found: emit the bare name so .mcp.json is still valid, and say so —
+	// the agent will fail at launch otherwise, with an error that does not
+	// mention PATH.
+	fmt.Printf("silo-admin: WARNING %s not found beside this binary or on PATH.\n"+
+		"           .mcp.json will use the bare name, so the agent needs it on ITS PATH.\n"+
+		"           Fix with: go install ./cmd/%s   (or pass --mcp-binary=/abs/path)\n", name, name)
+	return name
 }
