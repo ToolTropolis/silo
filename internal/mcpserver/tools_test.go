@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
@@ -40,6 +42,41 @@ func (f *fakeMemory) Read(_ context.Context, path string) ([]byte, error) {
 		return nil, client.ErrNotFound
 	}
 	return v, nil
+}
+
+// ReadWithHash mirrors the real client: the hash of absent content is the hash
+// of no bytes, so a caller can express "create only if nothing is here".
+func (f *fakeMemory) ReadWithHash(_ context.Context, path string) ([]byte, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.readErr != nil {
+		return nil, "", f.readErr
+	}
+	v, ok := f.store[path]
+	if !ok {
+		return nil, "", client.ErrNotFound
+	}
+	return v, hashOf(v), nil
+}
+
+// WriteIfMatch enforces the precondition for real rather than ignoring it, so a
+// test asserting a conflict is exercising the behaviour and not the fake.
+func (f *fakeMemory) WriteIfMatch(ctx context.Context, path string, content []byte,
+	actor, expectedHash string) error {
+	if expectedHash != "" {
+		f.mu.Lock()
+		actual := hashOf(f.store[path])
+		f.mu.Unlock()
+		if actual != expectedHash {
+			return client.ErrConflict
+		}
+	}
+	return f.WriteAs(ctx, path, content, actor)
+}
+
+func hashOf(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
 func (f *fakeMemory) WriteAs(ctx context.Context, path string, content []byte, actor string) error {
@@ -436,5 +473,91 @@ func TestInstructions_TellAnAgentWhenToReadAndWrite(t *testing.T) {
 	// Memory is durable and operator-visible; secrets do not belong in it.
 	if !strings.Contains(got, "secrets") {
 		t.Error("instructions should warn against storing secrets")
+	}
+}
+
+// The read/edit/write-back loop an agent actually runs. Without the hash, two
+// agents editing the same memory means last-writer-wins silently — the risk
+// that grows with every agent added to a project.
+func TestWrite_StaleHashIsRefusedAndNamesTheRecovery(t *testing.T) {
+	mem := newFakeMemory()
+	sess := connect(t, mem)
+
+	if _, isErr := callText(t, sess, "silo_write", map[string]any{
+		"path": "memory/notes.md", "content": "original",
+	}); isErr {
+		t.Fatal("seed write failed")
+	}
+	staleHash := hashOf([]byte("original"))
+
+	// Another agent writes in between.
+	if _, isErr := callText(t, sess, "silo_write", map[string]any{
+		"path": "memory/notes.md", "content": "someone else's edit",
+	}); isErr {
+		t.Fatal("competing write failed")
+	}
+
+	out, isErr := callText(t, sess, "silo_write", map[string]any{
+		"path": "memory/notes.md", "content": "my edit",
+		"if_content_sha256": staleHash,
+	})
+	if !isErr {
+		t.Fatal("a stale precondition must be reported as an error")
+	}
+	// The message has to name the recovery. An agent told only "conflict" tends
+	// to retry the same content, which is the overwrite this prevents.
+	for _, want := range []string{"silo_read", "content_sha256"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("conflict message %q should tell the agent to %s", out, want)
+		}
+	}
+
+	// The other agent's content survived.
+	got, _ := callText(t, sess, "silo_read", map[string]any{"path": "memory/notes.md"})
+	if got != "someone else's edit" {
+		t.Errorf("stored content = %q — the refused write clobbered the other edit", got)
+	}
+}
+
+// A hash from a fresh read must be accepted, or the feature is unusable.
+func TestWrite_FreshHashIsAccepted(t *testing.T) {
+	mem := newFakeMemory()
+	sess := connect(t, mem)
+
+	if _, isErr := callText(t, sess, "silo_write", map[string]any{
+		"path": "memory/notes.md", "content": "original",
+	}); isErr {
+		t.Fatal("seed write failed")
+	}
+
+	if _, isErr := callText(t, sess, "silo_write", map[string]any{
+		"path": "memory/notes.md", "content": "my edit",
+		"if_content_sha256": hashOf([]byte("original")),
+	}); isErr {
+		t.Fatal("a fresh precondition should be accepted")
+	}
+
+	got, _ := callText(t, sess, "silo_read", map[string]any{"path": "memory/notes.md"})
+	if got != "my edit" {
+		t.Errorf("stored content = %q, want %q", got, "my edit")
+	}
+}
+
+// Omitting the hash keeps the previous unconditional behaviour, so an agent
+// that does not know about the field is unaffected.
+func TestWrite_WithoutHashStaysUnconditional(t *testing.T) {
+	mem := newFakeMemory()
+	sess := connect(t, mem)
+
+	for _, content := range []string{"first", "second", "third"} {
+		if _, isErr := callText(t, sess, "silo_write", map[string]any{
+			"path": "memory/notes.md", "content": content,
+		}); isErr {
+			t.Fatalf("unconditional write of %q failed", content)
+		}
+	}
+	got, _ := callText(t, sess, "silo_read", map[string]any{"path": "memory/notes.md"})
+	if got != "third" {
+		t.Errorf("stored content = %q, want the last write", got)
 	}
 }

@@ -28,10 +28,16 @@ import (
 // so tests exercise the tool layer without a daemon.
 type Memory interface {
 	Read(ctx context.Context, path string) ([]byte, error)
+	// ReadWithHash also returns the content hash a conditional write takes as a
+	// precondition.
+	ReadWithHash(ctx context.Context, path string) ([]byte, string, error)
 	Write(ctx context.Context, path string, content []byte) error
 	// WriteAs records who wrote it. Separate from Write so the Client interface
 	// keeps its existing shape for every other caller.
 	WriteAs(ctx context.Context, path string, content []byte, actor string) error
+	// WriteIfMatch applies the write only if the stored content still hashes to
+	// expectedHash.
+	WriteIfMatch(ctx context.Context, path string, content []byte, actor, expectedHash string) error
 	List(ctx context.Context, pathPrefix string) ([]string, error)
 	Search(ctx context.Context, pathPrefix, query string) ([]client.SearchResult, error)
 }
@@ -61,6 +67,9 @@ type ReadOutput struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 	Found   bool   `json:"found"`
+	// ContentSHA256 is passed back as if_content_sha256 on a later write to
+	// avoid silently overwriting another agent's change.
+	ContentSHA256 string `json:"content_sha256,omitempty"`
 }
 
 type WriteInput struct {
@@ -70,6 +79,9 @@ type WriteInput struct {
 	// agents is calling. The caller names itself instead, which is what lets an
 	// operator see which agent produced which memory.
 	Actor string `json:"actor,omitempty" jsonschema:"Who is writing: your agent name, e.g. style-reviewer. Recorded so an operator can see which agent produced this memory."`
+	// Optional, but the difference between editing safely and silently
+	// discarding another agent's work when several share a project.
+	IfContentSHA256 string `json:"if_content_sha256,omitempty" jsonschema:"Optional. The content_sha256 returned by silo_read for this path. The write is rejected if the file changed since you read it, so you do not overwrite another agent's edit."`
 }
 
 type WriteOutput struct {
@@ -158,6 +170,9 @@ func Instructions(projectID string) string {
 		"memory/<topic>.md for facts the whole project shares, and " +
 		"memory/agents/<your-name>.md for notes only you need.\n\n" +
 		"Writes replace the whole file, so read before writing when adding to one. " +
+		"When you do, pass the content_sha256 that read returned as " +
+		"if_content_sha256 — several agents share this project's memory, and " +
+		"without it your write silently discards whatever landed in between.\n\n" +
 		"Do not store secrets, credentials, or anything you would not commit."
 }
 
@@ -167,7 +182,7 @@ func (s *Server) handleRead(ctx context.Context, _ *mcp.CallToolRequest, in Read
 		return errorResult("path is required"), ReadOutput{}, nil
 	}
 
-	content, err := s.memory.Read(ctx, path)
+	content, hash, err := s.memory.ReadWithHash(ctx, path)
 	if errors.Is(err, client.ErrNotFound) {
 		// Absence is a normal answer to "what do you remember?", not a failure.
 		// Returning an error would push the agent into error-handling for the
@@ -176,7 +191,9 @@ func (s *Server) handleRead(ctx context.Context, _ *mcp.CallToolRequest, in Read
 			Content: []mcp.Content{&mcp.TextContent{
 				Text: fmt.Sprintf("No memory stored at %q yet.", path),
 			}},
-		}, ReadOutput{Path: path, Found: false}, nil
+			// The hash of absent content, so an agent can create the file with
+			// silo_write and have it rejected if another agent got there first.
+		}, ReadOutput{Path: path, Found: false, ContentSHA256: client.HashOfAbsent}, nil
 	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("read %q: %v", path, err)), ReadOutput{}, nil
@@ -184,7 +201,7 @@ func (s *Server) handleRead(ctx context.Context, _ *mcp.CallToolRequest, in Read
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(content)}},
-	}, ReadOutput{Path: path, Content: string(content), Found: true}, nil
+	}, ReadOutput{Path: path, Content: string(content), Found: true, ContentSHA256: hash}, nil
 }
 
 func (s *Server) handleWrite(ctx context.Context, _ *mcp.CallToolRequest, in WriteInput) (*mcp.CallToolResult, WriteOutput, error) {
@@ -199,7 +216,18 @@ func (s *Server) handleWrite(ctx context.Context, _ *mcp.CallToolRequest, in Wri
 			WriteOutput{}, nil
 	}
 
-	if err := s.memory.WriteAs(ctx, path, []byte(in.Content), in.Actor); err != nil {
+	if err := s.memory.WriteIfMatch(ctx, path, []byte(in.Content), in.Actor,
+		in.IfContentSHA256); err != nil {
+		if errors.Is(err, client.ErrConflict) {
+			// Name the recovery explicitly. An agent told only "conflict" tends
+			// to retry the same content, which is precisely the overwrite the
+			// precondition exists to prevent.
+			return errorResult(fmt.Sprintf(
+				"%q changed since you read it, so nothing was written. Call silo_read "+
+					"again, reapply your change to the new content, and write back with "+
+					"the content_sha256 from that read. Do not retry the same content — "+
+					"it would discard the other change.", path)), WriteOutput{}, nil
+		}
 		if errors.Is(err, client.ErrTooLarge) {
 			// The daemon's message carries the actual and permitted sizes, so
 			// pass it through rather than restating it vaguely: an agent told

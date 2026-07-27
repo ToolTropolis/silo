@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/tooltropolis/silo/internal/backend"
 	"github.com/tooltropolis/silo/internal/cache"
@@ -50,6 +51,28 @@ func (o WriteOutcome) String() string {
 // This mirrors the pseudocode in the spec (Section 3.6). The concurrent-write
 // conflict test in the v1 definition of done exercises the retry branch.
 func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit func([]byte) []byte, actor, sessionID string) (WriteOutcome, error) {
+	return d.safeWrite(ctx, projectID, path, edit, actor, sessionID, "")
+}
+
+// SafeWriteIfMatch is SafeWrite with an optimistic-concurrency precondition:
+// the write applies only if the stored content still hashes to expectedHash,
+// and returns ErrPreconditionMismatch otherwise.
+//
+// Separate from SafeWrite rather than a sixth parameter on it. SafeWrite has
+// five callers — the Distilator's writer interface, the sync worker's queue
+// drain, the HTTP layer — and only one of them has a precondition to express;
+// widening the shared signature would make every other call site carry an empty
+// string forever.
+//
+// An empty expectedHash is exactly SafeWrite. Use ContentHash("") to require
+// that nothing exists at the path yet.
+func (d *Daemon) SafeWriteIfMatch(ctx context.Context, projectID, path string,
+	edit func([]byte) []byte, actor, sessionID, expectedHash string) (WriteOutcome, error) {
+	return d.safeWrite(ctx, projectID, path, edit, actor, sessionID, expectedHash)
+}
+
+func (d *Daemon) safeWrite(ctx context.Context, projectID, path string, edit func([]byte) []byte,
+	actor, sessionID, expectedHash string) (WriteOutcome, error) {
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		current, ver, err := d.backend.Get(ctx, projectID, path, "")
 		if err != nil && !errors.Is(err, backend.ErrNotFound) {
@@ -65,6 +88,17 @@ func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit fun
 			// read back cross-tenant, which the read path enforces separately.
 			if bindErr := d.bindCache(ctx, projectID); bindErr != nil && !errors.Is(bindErr, ErrCacheUnverified) {
 				return WriteDurable, bindErr
+			}
+			// A precondition cannot be honoured against an unreachable backend:
+			// the local cache may be stale, so a hash that matches it proves
+			// nothing about what is actually stored. Refusing is the only
+			// honest answer — silently dropping the precondition would let a
+			// caller believe a conflict check happened when none did.
+			if expectedHash != "" {
+				return WriteDurable, fmt.Errorf(
+					"%w: the backend is unreachable, so the stored content cannot be "+
+						"checked; retry when it recovers or write without a precondition",
+					ErrPreconditionMismatch)
 			}
 			newContent := edit(nil)
 			// Checked on the queued path too. If the cap only applied when the
@@ -87,6 +121,15 @@ func (d *Daemon) SafeWrite(ctx context.Context, projectID, path string, edit fun
 			// wrote, since Read falls back to the cache and would miss it.
 			_ = d.cache.Put(ctx, projectID, path, newContent)
 			return WriteQueued, nil
+		}
+
+		// Checked against the content just fetched, before edit runs and before
+		// anything is written — so a rejected precondition creates no version.
+		// Inside the retry loop because a CAS retry re-reads: if another writer
+		// landed in the gap, the caller's hash is genuinely stale and must be
+		// reported rather than silently retried against the new content.
+		if preErr := checkPrecondition(expectedHash, current); preErr != nil {
+			return WriteDurable, preErr
 		}
 
 		newContent := edit(current)

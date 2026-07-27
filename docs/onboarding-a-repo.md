@@ -264,6 +264,43 @@ way around it, and the oversized entry would replay into the bucket on recovery.
 Prefer many small focused files to a few large ones: a write replaces the whole
 file, so a large one is re-sent in full on every update.
 
+### Editing without clobbering
+
+A write replaces the whole file, so two agents editing the same memory means
+last-writer-wins — silently. Pass the hash you read back as a precondition and
+the write is refused instead:
+
+```bash
+# Read returns content_sha256 alongside the content.
+HASH=$(curl -s "$API/v1/read?path=memory/notes.md" \
+  -H "Authorization: Bearer $TOKEN" | jq -r .content_sha256)
+
+# The write applies only if nothing changed in between; 409 if it did.
+curl -X POST "$API/v1/write" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"path\":\"memory/notes.md\",\"content\":\"$(printf 'edited' | base64)\",
+       \"if_content_sha256\":\"$HASH\"}"
+```
+
+On `409`, re-read, reapply your change to the new content, and write back with
+the hash from *that* read. Retrying the same content would discard the other
+change.
+
+The hash of empty content —
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, exported as
+`client.HashOfAbsent` — means "create only if nothing exists yet".
+
+Agents get this through `silo_read`'s `content_sha256` and `silo_write`'s
+`if_content_sha256`. Omitting the field keeps the old unconditional behaviour.
+
+It is SHA-256 of the content, not the backend's ETag: an ETag is S3-specific and
+is not a content hash for multipart uploads, so it would leak the storage layer
+into the agent-facing API.
+
+**During a backend outage a conditional write is refused**, because the local
+cache may be stale and a hash matching it proves nothing about what is stored.
+Unconditional writes still queue normally.
+
 A daemon started with `--rqlite` verifies these without a restart:
 
 ```bash
@@ -344,5 +381,6 @@ one-step-per-invocation rule.
 | SDK returns `ErrUnauthorized` | Token isn't in the daemon's `--tokens` map. |
 | SDK returns `ErrReadOnly` / daemon returns `403 token is read-only` | The token was minted read-only. It is valid — retrying will not help. Mint a read-write token if the write needs to persist. |
 | SDK returns `ErrTooLarge` / daemon returns `413 entry exceeds the size limit` | The content is over the project's per-entry cap. Split it across several paths, or raise **Max entry** on the settings page. |
+| SDK returns `ErrConflict` / daemon returns `409 content hash precondition failed` | The path changed since you read it. Re-read, reapply your edit, and write back with the new `content_sha256` — do not retry the same content. |
 | SDK returns `ErrNotFound` for a path you wrote | Writing under a different project's token — tokens are scoped to one project. |
 | Distilator: `is a credential configured?` | Run `ant auth login`, then `ant auth status` to confirm the active source. |

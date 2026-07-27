@@ -143,6 +143,8 @@ func decodeError(resp *http.Response) error {
 		return ErrNotFound
 	case http.StatusUnauthorized:
 		return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
+	case http.StatusConflict:
+		return fmt.Errorf("%w: %s", ErrConflict, msg)
 	case http.StatusRequestEntityTooLarge:
 		return fmt.Errorf("%w: %s", ErrTooLarge, msg)
 	case http.StatusForbidden:
@@ -156,21 +158,42 @@ func decodeError(resp *http.Response) error {
 }
 
 func (c *daemonClient) Read(ctx context.Context, path string) ([]byte, error) {
+	content, _, err := c.ReadWithHash(ctx, path)
+	return content, err
+}
+
+func (c *daemonClient) ReadWithHash(ctx context.Context, path string) ([]byte, string, error) {
 	var out struct {
-		Content []byte `json:"content"`
+		Content       []byte `json:"content"`
+		ContentSHA256 string `json:"content_sha256"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/v1/read", url.Values{"path": {path}}, nil, &out); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return out.Content, nil
+	return out.Content, out.ContentSHA256, nil
 }
 
 func (c *daemonClient) Write(ctx context.Context, path string, content []byte) error {
 	return c.WriteAs(ctx, path, content, "")
 }
 
+func (c *daemonClient) WriteIfMatch(ctx context.Context, path string, content []byte,
+	actor, expectedHash string) error {
+	return c.write(ctx, path, content, actor, expectedHash)
+}
+
 func (c *daemonClient) WriteAs(ctx context.Context, path string, content []byte, actor string) error {
+	return c.write(ctx, path, content, actor, "")
+}
+
+func (c *daemonClient) write(ctx context.Context, path string, content []byte,
+	actor, expectedHash string) error {
 	body := map[string]interface{}{"path": path, "content": content}
+	// Omitted rather than sent empty, so an unconditional write is byte-for-byte
+	// the request it always was.
+	if expectedHash != "" {
+		body["if_content_sha256"] = expectedHash
+	}
 	// Attribution is what lets an operator see which agent wrote what. The
 	// per-call actor wins over the client-wide one: one MCP server serves a
 	// whole repo, so the caller is the only thing that knows which agent it is.

@@ -313,10 +313,17 @@ type writeRequest struct {
 	Content   []byte `json:"content"` // base64 in JSON
 	Actor     string `json:"actor,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	// IfContentSHA256 makes the write conditional: it applies only if the
+	// stored content still hashes to this value. Omitted means unconditional,
+	// which is the behaviour every existing caller gets.
+	IfContentSHA256 string `json:"if_content_sha256,omitempty"`
 }
 
 type readResponse struct {
 	Content []byte `json:"content"`
+	// ContentSHA256 is what a caller round-trips as if_content_sha256 on a
+	// later write to express "I am editing the version I just read".
+	ContentSHA256 string `json:"content_sha256"`
 }
 
 // writeResponse tells the caller whether the write is actually safe.
@@ -358,7 +365,10 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, readResponse{Content: content})
+	writeJSON(w, http.StatusOK, readResponse{
+		Content:       content,
+		ContentSHA256: ContentHash(content),
+	})
 }
 
 func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
@@ -395,9 +405,16 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		actor = s.actor
 	}
 	content := req.Content
-	outcome, err := s.daemon.SafeWrite(r.Context(), grant.ProjectID, req.Path,
-		func([]byte) []byte { return content }, actor, req.SessionID)
+	outcome, err := s.daemon.SafeWriteIfMatch(r.Context(), grant.ProjectID, req.Path,
+		func([]byte) []byte { return content }, actor, req.SessionID, req.IfContentSHA256)
 	if err != nil {
+		if errors.Is(err, ErrPreconditionMismatch) {
+			// 409, not 412: the caller and the store disagree about the current
+			// state, which is a conflict to resolve by re-reading, not a
+			// malformed request header to correct.
+			writeErr(w, http.StatusConflict, err)
+			return
+		}
 		if errors.Is(err, ErrEntryTooLarge) {
 			// 413, not 500: the request was understood and refused by policy.
 			// A 500 would tell the caller to retry something that can never
